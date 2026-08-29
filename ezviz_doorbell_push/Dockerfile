@@ -1,14 +1,21 @@
-ARG BUILD_FROM
-FROM ${BUILD_FROM}
+# A fixed base image on purpose: the Supervisor only passes BUILD_FROM when a
+# build.yaml pins a base per architecture, and an unset ARG makes the build
+# fail with "base name should not be blank". python:*-alpine is multi-arch, so
+# aarch64, amd64 and armv7 all resolve on their own.
+FROM python:3.12-alpine
 
 ENV PYTHONUNBUFFERED=1
 
-RUN apk add --no-cache python3 py3-pip
-
 COPY requirements.txt /tmp/requirements.txt
-RUN pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements.txt
+
+# pycryptodome (pulled in by pyezvizapi to decrypt snapshots) ships musllinux
+# wheels for the common architectures but not all of them, so keep a toolchain
+# around for the duration of the install in case it has to compile.
+RUN apk add --no-cache --virtual .build-deps gcc musl-dev python3-dev \
+ && pip install --no-cache-dir -r /tmp/requirements.txt \
+ && apk del .build-deps
 
 COPY ezviz_push.py /app/ezviz_push.py
 WORKDIR /app
 
-CMD ["python3", "/app/ezviz_push.py"]
+CMD ["python", "/app/ezviz_push.py"]
