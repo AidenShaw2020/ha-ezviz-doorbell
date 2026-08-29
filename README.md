@@ -72,8 +72,24 @@ verification_codes:
   - serial: D1234567
     code: ABCDEF      # from the device label, needed to decrypt snapshots
 mfa_code: ""          # only for the first login, see below
+poll_interval: 30     # seconds; 0 disables the polling fallback
 log_level: info
 ```
+
+### The polling fallback
+
+Push is the fast path, but EZVIZ sometimes reports a connected, subscribed
+client and then delivers nothing to it. So the add-on also polls the same
+message feed the official app reads, every `poll_interval` seconds, and emits
+anything new it finds there — with `"source": "poll"` in the event attributes,
+so you can tell the two paths apart.
+
+A polled event is up to `poll_interval` seconds late, which is poor for a
+doorbell but better than losing it. If push is working for you, set
+`poll_interval: 0` to switch polling off.
+
+The first sweep after a start only records what already exists, so old messages
+are not replayed as fresh events.
 
 `mqtt_host` / `mqtt_port` / `mqtt_username` / `mqtt_password` are optional and
 only needed for a broker the Supervisor does not manage.

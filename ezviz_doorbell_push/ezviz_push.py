@@ -159,6 +159,8 @@ class EzvizPushBridge:
         self._announced: set[str] = set()
         self._mqtt: mqtt.Client | None = None
         self._stop = threading.Event()
+        self._seen_messages: set[str] = set()
+        self._poll_primed = False
 
     # ------------------------------------------------------------------
     # Local MQTT
@@ -358,6 +360,91 @@ class EzvizPushBridge:
         if pic_url := ext.get("default_pic_url"):
             self.publish_snapshot(serial, pic_url)
 
+    def handle_polled(self, item: dict[str, Any]) -> None:
+        """Emit an event from a message found by polling."""
+        serial = item.get("deviceSerial")
+        if self._serial_filter and serial not in self._serial_filter:
+            return
+
+        _LOGGER.info("Polled message for %s: %s", serial, item)
+
+        ext = item.get("ext")
+        ext = ext if isinstance(ext, dict) else {}
+        raw_code = ext.get("alarmType") or item.get("subType")
+        try:
+            code = int(raw_code)
+        except (TypeError, ValueError):
+            code = -1
+
+        event_type = ALERT_TYPE_MAP.get(code, EVENT_ALARM)
+
+        self.announce(serial)
+        self._publish(
+            f"{BASE_TOPIC}/{serial}/event",
+            json.dumps(
+                {
+                    "event_type": event_type,
+                    "alert_type_code": raw_code,
+                    "alert": item.get("title") or item.get("detail"),
+                    "time": item.get("timeStr") or item.get("time"),
+                    "msg_id": item.get("msgId"),
+                    "source": "poll",
+                }
+            ),
+        )
+
+        if pic_url := item.get("pic"):
+            self.publish_snapshot(serial, str(pic_url).split(";")[0])
+
+    def poll_messages(
+        self, client: EzvizClient, interval: int, cycle_stop: threading.Event
+    ) -> None:
+        """Poll the cloud message list as a fallback for missing pushes.
+
+        The push channel can report itself connected and subscribed and still
+        deliver nothing. Polling the same feed the official app reads answers
+        whether the event was recorded at all, and doubles as a working - if
+        delayed - path to Home Assistant when push stays silent.
+        """
+        serials = ",".join(sorted(self._serial_filter)) or None
+
+        while not self._stop.is_set() and not cycle_stop.is_set():
+            try:
+                response = client.get_device_messages_list(
+                    serials=serials, limit=10, date="", end_time=""
+                )
+                items = response.get("message") or response.get("messages") or []
+                if not isinstance(items, list):
+                    items = []
+
+                for item in reversed(items):
+                    msg_id = item.get("msgId")
+                    if not msg_id or msg_id in self._seen_messages:
+                        continue
+                    self._seen_messages.add(msg_id)
+                    # The first sweep only records what already exists, so
+                    # history is not replayed as fresh events on startup.
+                    if self._poll_primed:
+                        self.handle_polled(item)
+
+                if not self._poll_primed:
+                    _LOGGER.info(
+                        "Message poll primed with %d existing message(s),"
+                        " watching for new ones every %ss",
+                        len(self._seen_messages),
+                        interval,
+                    )
+                    self._poll_primed = True
+
+                if len(self._seen_messages) > 500:
+                    self._seen_messages.clear()
+                    self._poll_primed = False
+
+            except (PyEzvizError, OSError) as err:
+                _LOGGER.warning("Message poll failed: %s", err)
+
+            cycle_stop.wait(interval)
+
     def load_devices(self, client: EzvizClient) -> dict[str, Any]:
         """Fetch device info so entities are not named after a serial."""
         try:
@@ -370,6 +457,19 @@ class EzvizPushBridge:
             name = ((info or {}).get("deviceInfos") or {}).get("name")
             if name:
                 self._names[serial] = name
+
+        # Knowing what else is on the account matters: if no other device can
+        # raise an alarm, "no push arrived" says nothing about the channel.
+        _LOGGER.info("Account has %d device(s):", len(devices or {}))
+        for serial, info in (devices or {}).items():
+            dev = (info or {}).get("deviceInfos") or {}
+            _LOGGER.info(
+                "  %s  %-24s category=%s status=%s",
+                serial,
+                dev.get("name") or "?",
+                dev.get("deviceCategory"),
+                dev.get("status"),
+            )
 
         return devices or {}
 
@@ -384,12 +484,17 @@ class EzvizPushBridge:
             if self._serial_filter and serial not in self._serial_filter:
                 continue
 
+            name = self._names.get(serial, serial)
             nodisturb = (info or {}).get("NODISTURB") or {}
             if not nodisturb:
+                _LOGGER.info(
+                    "%s: no NODISTURB block reported, cannot tell whether"
+                    " EZVIZ is suppressing its notifications",
+                    name,
+                )
                 continue
 
-            name = self._names.get(serial, serial)
-            _LOGGER.debug("%s NODISTURB: %s", name, nodisturb)
+            _LOGGER.info("%s NODISTURB: %s", name, nodisturb)
 
             if nodisturb.get("callingEnable"):
                 _LOGGER.warning(
@@ -524,6 +629,9 @@ class EzvizPushBridge:
 
         while not self._stop.is_set():
             push_client = None
+            # Bounds the poll thread to this connection cycle, so a reconnect
+            # never leaves a second one running against a stale client.
+            cycle_stop = threading.Event()
             try:
                 try:
                     client = self.authenticate()
@@ -553,6 +661,17 @@ class EzvizPushBridge:
                 self.instrument_push(push_client)
                 _LOGGER.info("Connected to EZVIZ push, waiting for events")
 
+                poll_interval = int(self._options.get("poll_interval") or 0)
+                if poll_interval > 0:
+                    threading.Thread(
+                        target=self.poll_messages,
+                        args=(client, poll_interval, cycle_stop),
+                        name="ezviz-poll",
+                        daemon=True,
+                    ).start()
+                else:
+                    _LOGGER.info("Message polling is off (poll_interval=0)")
+
                 while not self._stop.is_set():
                     self._stop.wait(1)
 
@@ -560,6 +679,7 @@ class EzvizPushBridge:
                 _LOGGER.error("EZVIZ connection failed (%s), retrying in 60s", err)
                 self._stop.wait(60)
             finally:
+                cycle_stop.set()
                 if push_client is not None:
                     try:
                         push_client.stop()
