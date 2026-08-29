@@ -52,12 +52,20 @@ EVENT_MOTION = "motion"
 EVENT_ALARM = "alarm"
 EVENT_TYPES = [EVENT_RING, EVENT_MOTION, EVENT_ALARM]
 
-# Observed EZVIZ push alert codes: 0 is the doorbell button, 10000 the PIR.
-# Anything else is reported as a generic alarm with the raw code attached, so
-# an unmapped code can be identified from the event attributes.
-ALERT_TYPE_MAP: dict[int, str] = {
+# Push and polled messages use two different code spaces, so they get two
+# different maps. Anything unmapped is reported as a generic alarm with the raw
+# code attached, so a new code can be identified from the event attributes.
+
+# Push messages carry "alert_type_code": 0 is the doorbell button, 10000 the PIR.
+PUSH_ALERT_TYPES: dict[int, str] = {
     0: EVENT_RING,
     10000: EVENT_MOTION,
+}
+
+# Polled messages carry "subType". A ring is 2701 - a *call*, not an alarm,
+# which is why it never appears on the alarm push channel.
+POLL_SUBTYPES: dict[int, str] = {
+    2701: EVENT_RING,
 }
 
 _LOGGER = logging.getLogger("ezviz_push")
@@ -289,6 +297,7 @@ class EzvizPushBridge:
             base64.b64encode(data).decode("ascii"),
             retain=True,
         )
+        _LOGGER.info("Published a %d byte snapshot for %s", len(data), serial)
 
     # ------------------------------------------------------------------
     # EZVIZ push
@@ -327,7 +336,7 @@ class EzvizPushBridge:
             code = int(raw_code)
         except (TypeError, ValueError):
             code = -1
-        event_type = ALERT_TYPE_MAP.get(code, EVENT_ALARM)
+        event_type = PUSH_ALERT_TYPES.get(code, EVENT_ALARM)
 
         _LOGGER.info(
             "%s (%s): %s",
@@ -370,13 +379,31 @@ class EzvizPushBridge:
 
         ext = item.get("ext")
         ext = ext if isinstance(ext, dict) else {}
-        raw_code = ext.get("alarmType") or item.get("subType")
+        raw_code = item.get("subType")
         try:
             code = int(raw_code)
         except (TypeError, ValueError):
             code = -1
 
-        event_type = ALERT_TYPE_MAP.get(code, EVENT_ALARM)
+        event_type = POLL_SUBTYPES.get(code, EVENT_ALARM)
+
+        # A ring is a call rather than an alarm, and says so outright.
+        if ext.get("callingStatus"):
+            event_type = EVENT_RING
+        elif event_type is EVENT_ALARM and ext.get("alarmType") is not None:
+            try:
+                event_type = PUSH_ALERT_TYPES.get(
+                    int(ext["alarmType"]), EVENT_ALARM
+                )
+            except (TypeError, ValueError):
+                pass
+
+        if event_type is EVENT_ALARM:
+            _LOGGER.info(
+                "Polled subType %s is not mapped yet, reported as '%s'",
+                raw_code,
+                EVENT_ALARM,
+            )
 
         self.announce(serial)
         self._publish(

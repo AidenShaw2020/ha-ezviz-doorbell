@@ -76,17 +76,31 @@ poll_interval: 30     # seconds; 0 disables the polling fallback
 log_level: info
 ```
 
-### The polling fallback
+### Why polling is the path that works for the ring
 
-Push is the fast path, but EZVIZ sometimes reports a connected, subscribed
-client and then delivers nothing to it. So the add-on also polls the same
-message feed the official app reads, every `poll_interval` seconds, and emits
-anything new it finds there — with `"source": "poll"` in the event attributes,
-so you can tell the two paths apart.
+A button press is not an alarm. Captured from a live EP8x:
 
-A polled event is up to `poll_interval` seconds late, which is poor for a
-doorbell but better than losing it. If push is working for you, set
-`poll_interval: 0` to switch polling off.
+```python
+{'subType': 2701,
+ 'title': 'Your doorbell is ringing',
+ 'ext': {'callingStatus': 1, 'text': 'somebody there ring the door',
+         'preTime': 5, 'delayTime': 25},
+ 'picCrypt': 1, ...}
+```
+
+`subType 2701` with a `callingStatus` and call timings — EZVIZ treats a ring as
+an incoming **call**, and the MQTT push channel this add-on connects to carries
+**alarms**. That is why the push side can report itself connected, subscribed
+and granted QoS 2, and still never deliver a ring: it is not on that channel at
+all. Motion still arrives over push, when it arrives.
+
+So the add-on also polls the same message feed the official app reads, every
+`poll_interval` seconds, and emits anything new — tagged `"source": "poll"` in
+the event attributes so the two paths stay distinguishable.
+
+A polled ring is up to `poll_interval` seconds late. `10` is a reasonable
+compromise; drop it to `5` if you want the doorbell snappier and don't mind the
+extra cloud requests, or set `0` to switch polling off entirely.
 
 The first sweep after a start only records what already exists, so old messages
 are not replayed as fresh events.
@@ -116,11 +130,11 @@ invalidate the stored session and ask for a new code.
 
 | `alert_type_code` | Event type |
 | --- | --- |
-| `0` | `ring` — doorbell button |
-| `10000` | `motion` — PIR |
+| `0` | `ring` — doorbell button (push) |
+| `10000` | `motion` — PIR (push) |
 | anything else | `alarm`, raw code kept in the attributes |
 
-Codes observed in
+`subType 2701` maps to `ring` on the polled feed. Push codes observed in
 [RenierM26/ha-ezviz#112](https://github.com/RenierM26/ha-ezviz/issues/112), on a
 DP1C. If your ring arrives as `alarm`, the log prints the unmapped code and the
 event attributes carry it — add it to `ALERT_TYPE_MAP` in `ezviz_push.py`.

@@ -1,5 +1,5 @@
 name: EZVIZ Doorbell Push
-version: "0.1.5"
+version: "0.1.6"
 slug: ezviz_doorbell_push
 description: Real-time EZVIZ doorbell and motion events via MQTT discovery
 url: https://github.com/AidenShaw2020/ha-ezviz-doorbell
@@ -18,7 +18,7 @@ options:
   ezviz_region: apiieu.ezvizlife.com
   serials: []
   verification_codes: []
-  poll_interval: 30
+  poll_interval: 10
   log_level: info
 schema:
   ezviz_username: str
