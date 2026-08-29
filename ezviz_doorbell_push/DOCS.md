@@ -15,9 +15,9 @@ where you started.
 ### A doorbell press never reaches Home Assistant
 
 The built-in integration is `cloud_polling` on a 30 second interval and ships no
-`event` platform. The button press is delivered over the EZVIZ **push** channel
-and never appears in the polled alarm feed, so motion gets through and the ring
-does not. Reported upstream in
+`event` platform, so there is nothing for a button press to arrive on. It also
+polls only the *alarm* feed, and a ring is not an alarm — see below — so the
+press stays invisible even between polls. Reported upstream in
 [home-assistant/core#99813](https://github.com/home-assistant/core/issues/99813)
 (DP2) and
 [home-assistant/core#130339](https://github.com/home-assistant/core/issues/130339)
@@ -72,7 +72,7 @@ verification_codes:
   - serial: D1234567
     code: ABCDEF      # from the device label, needed to decrypt snapshots
 mfa_code: ""          # only for the first login, see below
-poll_interval: 30     # seconds; 0 disables the polling fallback
+poll_interval: 10     # seconds; 0 disables the polling fallback
 log_level: info
 ```
 
@@ -137,7 +137,8 @@ invalidate the stored session and ask for a new code.
 `subType 2701` maps to `ring` on the polled feed. Push codes observed in
 [RenierM26/ha-ezviz#112](https://github.com/RenierM26/ha-ezviz/issues/112), on a
 DP1C. If your ring arrives as `alarm`, the log prints the unmapped code and the
-event attributes carry it — add it to `ALERT_TYPE_MAP` in `ezviz_push.py`.
+event attributes carry it — add it to `PUSH_ALERT_TYPES` (push) or
+`POLL_SUBTYPES` (polled) in `ezviz_push.py`.
 
 ## Automation example
 
@@ -159,9 +160,13 @@ automation:
 
 ## Status
 
-Written and syntax-checked, **not yet run against a real doorbell**. The alert
-code mapping in particular is taken from a DP1C and may differ on other models —
-see above for how to correct it.
+Confirmed working against an EP8x: the ring is delivered, mapped to `ring`, and
+its encrypted snapshot decrypts. It arrives over the polling path — the alarm
+push channel stays silent for a ring, for the reason described above.
+
+Motion codes are still unverified on this model. Anything unmapped is reported
+as `alarm` with its raw code in the log and in the event attributes, which is
+what you need to extend the maps.
 
 ## tools/
 
