@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+custom_components/
+test_build/
+ezviz_token.json
+*.jsonl
