@@ -405,27 +405,61 @@ class EzvizPushBridge:
                     name,
                 )
 
-    def enable_raw_logging(self, push_client: Any) -> None:
-        """Log raw push payloads, so even undecodable traffic is visible."""
-        if not _LOGGER.isEnabledFor(logging.DEBUG):
-            return
+    def instrument_push(self, push_client: Any) -> None:
+        """Guarantee a subscription and report it at INFO.
 
+        pyezvizapi only subscribes when the broker reports a fresh session::
+
+            if rc == 0 and not session_present:
+                client.subscribe(self._topic, qos=2)
+
+        A resumed session whose subscriptions did not survive therefore leaves
+        the client connected and permanently deaf, with nothing said above
+        debug level. Subscribe again explicitly - it is idempotent - and log
+        the outcome, so "nothing was sent" can be told apart from "we were
+        never listening".
+        """
         paho_client = getattr(push_client, "mqtt_client", None)
         if paho_client is None:
+            _LOGGER.warning("Push client exposes no MQTT client to instrument")
             return
 
-        original = paho_client.on_message
+        topic = getattr(push_client, "_topic", None)
+        original_subscribe = paho_client.on_subscribe
+        original_message = paho_client.on_message
 
-        def wrapper(client: Any, userdata: Any, message: Any) -> None:
+        def on_subscribe(
+            client: Any, userdata: Any, mid: Any, granted_qos: Any, *args: Any
+        ) -> None:
+            _LOGGER.info(
+                "Subscribed to EZVIZ push topic %s (qos=%s)", topic, granted_qos
+            )
+            if original_subscribe:
+                original_subscribe(client, userdata, mid, granted_qos, *args)
+
+        def on_message(client: Any, userdata: Any, message: Any) -> None:
             _LOGGER.debug(
                 "Raw push payload on %s: %r",
                 getattr(message, "topic", "?"),
                 getattr(message, "payload", b""),
             )
-            if original:
-                original(client, userdata, message)
+            if original_message:
+                original_message(client, userdata, message)
 
-        paho_client.on_message = wrapper
+        paho_client.on_subscribe = on_subscribe
+        paho_client.on_message = on_message
+
+        if not topic:
+            _LOGGER.warning("Could not determine the EZVIZ push topic")
+            return
+
+        result, mid = paho_client.subscribe(topic, qos=2)
+        if result == mqtt.MQTT_ERR_SUCCESS:
+            _LOGGER.info("Subscription to %s requested (mid=%s)", topic, mid)
+        else:
+            _LOGGER.error(
+                "Could not subscribe to %s: paho error %s", topic, result
+            )
 
     def _load_token(self) -> dict[str, Any] | None:
         """Return the saved session token, if there is a usable one."""
@@ -513,8 +547,10 @@ class EzvizPushBridge:
                 push_client = client.get_mqtt_client(
                     on_message_callback=self.handle_push
                 )
-                push_client.connect()
-                self.enable_raw_logging(push_client)
+                # A clean session forces the library's own subscribe to run,
+                # rather than trusting a resumed session to still hold it.
+                push_client.connect(clean_session=True)
+                self.instrument_push(push_client)
                 _LOGGER.info("Connected to EZVIZ push, waiting for events")
 
                 while not self._stop.is_set():
@@ -554,6 +590,21 @@ def main() -> int:
         level=getattr(logging, str(options.get("log_level", "info")).upper(), 20),
         format="%(asctime)s %(levelname)s %(message)s",
     )
+
+    # Echo the effective configuration, so a setting that did not take can be
+    # spotted from the log rather than guessed at.
+    _LOGGER.info(
+        "Starting: log_level=%s region=%s serials=%s verification_codes_for=%s",
+        options.get("log_level"),
+        options.get("ezviz_region"),
+        options.get("serials") or "(all devices)",
+        [
+            item.get("serial")
+            for item in options.get("verification_codes") or []
+        ]
+        or "(none)",
+    )
+    _LOGGER.debug("Debug logging is enabled")
 
     if not options.get("ezviz_username") or not options.get("ezviz_password"):
         _LOGGER.error("Set ezviz_username and ezviz_password in the add-on options")
