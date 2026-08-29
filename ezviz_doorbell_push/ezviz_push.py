@@ -298,14 +298,29 @@ class EzvizPushBridge:
         ext = ext if isinstance(ext, dict) else {}
 
         serial = ext.get("device_serial")
+        raw_code = ext.get("alert_type_code")
+
+        # Logged before any filtering, so "did anything arrive at all?" can
+        # always be answered from the default log level.
+        _LOGGER.info(
+            "Push received: serial=%s alert_type_code=%s alert=%s",
+            serial,
+            raw_code,
+            msg.get("alert"),
+        )
+        _LOGGER.debug("Full push message: %s", msg)
+
         if not serial:
-            _LOGGER.debug("Ignoring push message without a serial: %s", msg)
+            _LOGGER.info("Ignoring push message: it carries no device serial")
             return
         if self._serial_filter and serial not in self._serial_filter:
-            _LOGGER.debug("Ignoring push message for filtered device %s", serial)
+            _LOGGER.info(
+                "Ignoring push message for %s: not in the configured serials %s",
+                serial,
+                sorted(self._serial_filter),
+            )
             return
 
-        raw_code = ext.get("alert_type_code")
         try:
             code = int(raw_code)
         except (TypeError, ValueError):
@@ -313,11 +328,10 @@ class EzvizPushBridge:
         event_type = ALERT_TYPE_MAP.get(code, EVENT_ALARM)
 
         _LOGGER.info(
-            "%s (%s): %s (alert_type_code=%s)",
+            "%s (%s): %s",
             self._names.get(serial, serial),
             serial,
             event_type,
-            raw_code,
         )
         if event_type == EVENT_ALARM:
             _LOGGER.info(
@@ -344,18 +358,74 @@ class EzvizPushBridge:
         if pic_url := ext.get("default_pic_url"):
             self.publish_snapshot(serial, pic_url)
 
-    def load_names(self, client: EzvizClient) -> None:
-        """Fetch device names so entities are not named after a serial."""
+    def load_devices(self, client: EzvizClient) -> dict[str, Any]:
+        """Fetch device info so entities are not named after a serial."""
         try:
             devices = client.get_device_infos()
         except (PyEzvizError, OSError) as err:
-            _LOGGER.warning("Could not fetch device names: %s", err)
-            return
+            _LOGGER.warning("Could not fetch device info: %s", err)
+            return {}
 
         for serial, info in (devices or {}).items():
             name = ((info or {}).get("deviceInfos") or {}).get("name")
             if name:
                 self._names[serial] = name
+
+        return devices or {}
+
+    def check_notifications(self, devices: dict[str, Any]) -> None:
+        """Warn when EZVIZ is set not to push the things we listen for.
+
+        EZVIZ suppresses pushes server side per device. If the do-not-disturb
+        flags are set, nothing ever reaches this add-on however healthy the
+        connection looks, so say so plainly instead of waiting in silence.
+        """
+        for serial, info in devices.items():
+            if self._serial_filter and serial not in self._serial_filter:
+                continue
+
+            nodisturb = (info or {}).get("NODISTURB") or {}
+            if not nodisturb:
+                continue
+
+            name = self._names.get(serial, serial)
+            _LOGGER.debug("%s NODISTURB: %s", name, nodisturb)
+
+            if nodisturb.get("callingEnable"):
+                _LOGGER.warning(
+                    "%s: doorbell call notifications are switched OFF in the"
+                    " EZVIZ app, so a button press is never pushed. Turn"
+                    " notifications back on for this device in the app.",
+                    name,
+                )
+            if nodisturb.get("alarmEnable"):
+                _LOGGER.warning(
+                    "%s: alarm notifications are switched OFF in the EZVIZ"
+                    " app, so motion is never pushed.",
+                    name,
+                )
+
+    def enable_raw_logging(self, push_client: Any) -> None:
+        """Log raw push payloads, so even undecodable traffic is visible."""
+        if not _LOGGER.isEnabledFor(logging.DEBUG):
+            return
+
+        paho_client = getattr(push_client, "mqtt_client", None)
+        if paho_client is None:
+            return
+
+        original = paho_client.on_message
+
+        def wrapper(client: Any, userdata: Any, message: Any) -> None:
+            _LOGGER.debug(
+                "Raw push payload on %s: %r",
+                getattr(message, "topic", "?"),
+                getattr(message, "payload", b""),
+            )
+            if original:
+                original(client, userdata, message)
+
+        paho_client.on_message = wrapper
 
     def _load_token(self) -> dict[str, Any] | None:
         """Return the saved session token, if there is a usable one."""
@@ -435,7 +505,8 @@ class EzvizPushBridge:
                     self._stop.wait(300)
                     continue
 
-                self.load_names(client)
+                devices = self.load_devices(client)
+                self.check_notifications(devices)
                 for serial in self._serial_filter:
                     self.announce(serial)
 
@@ -443,6 +514,7 @@ class EzvizPushBridge:
                     on_message_callback=self.handle_push
                 )
                 push_client.connect()
+                self.enable_raw_logging(push_client)
                 _LOGGER.info("Connected to EZVIZ push, waiting for events")
 
                 while not self._stop.is_set():
