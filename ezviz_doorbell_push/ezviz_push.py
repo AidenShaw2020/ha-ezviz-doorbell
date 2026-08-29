@@ -71,6 +71,13 @@ POLL_SUBTYPES: dict[int, str] = {
     2701: EVENT_RING,
 }
 
+# After any push, poll hard for a short while. Someone reaching the button has
+# almost always tripped motion first, and that push arrives instantly - so it
+# is a reliable early warning that a ring may be seconds away.
+BURST_SECONDS = 30
+BURST_INTERVAL = 1.0
+POLL_TICK = 0.25
+
 _LOGGER = logging.getLogger("ezviz_push")
 
 
@@ -173,6 +180,8 @@ class EzvizPushBridge:
         self._seen_messages: set[str] = set()
         self._poll_primed = False
         self._recent: dict[str, float] = {}
+        self._poll_now = threading.Event()
+        self._burst_until = 0.0
         # Wide enough to cover a poll arriving after a push for the same event,
         # but no wider, so two genuine presses are not merged into one.
         self._dedupe_window = max(15, int(options.get("poll_interval") or 0) + 10)
@@ -327,6 +336,12 @@ class EzvizPushBridge:
             msg.get("alert"),
         )
         _LOGGER.debug("Full push message: %s", msg)
+
+        # A ring never comes over push, only by polling. Motion does come over
+        # push, and usually just before the button is pressed, so treat any
+        # push as a cue to start polling hard.
+        self._burst_until = time.monotonic() + BURST_SECONDS
+        self._poll_now.set()
 
         if not serial:
             _LOGGER.info("Ignoring push message: it carries no device serial")
@@ -517,7 +532,22 @@ class EzvizPushBridge:
             except (PyEzvizError, OSError) as err:
                 _LOGGER.warning("Message poll failed: %s", err)
 
-            cycle_stop.wait(interval)
+            self._wait_before_next_poll(interval, cycle_stop)
+
+    def _wait_before_next_poll(
+        self, interval: int, cycle_stop: threading.Event
+    ) -> None:
+        """Sleep until the next poll, cut short by a push or a shutdown."""
+        in_burst = time.monotonic() < self._burst_until
+        deadline = time.monotonic() + (BURST_INTERVAL if in_burst else interval)
+
+        while time.monotonic() < deadline:
+            if cycle_stop.wait(POLL_TICK) or self._stop.is_set():
+                return
+            if self._poll_now.is_set():
+                self._poll_now.clear()
+                _LOGGER.debug("Poll woken early by a push")
+                return
 
     def load_devices(self, client: EzvizClient) -> dict[str, Any]:
         """Fetch device info so entities are not named after a serial."""

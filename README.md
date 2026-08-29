@@ -72,7 +72,7 @@ verification_codes:
   - serial: D1234567
     code: ABCDEF      # from the device label, needed to decrypt snapshots
 mfa_code: ""          # only for the first login, see below
-poll_interval: 10     # seconds; 0 disables the polling fallback
+poll_interval: 5      # seconds; 0 disables the polling fallback
 log_level: info
 ```
 
@@ -98,9 +98,22 @@ So the add-on also polls the same message feed the official app reads, every
 `poll_interval` seconds, and emits anything new — tagged `"source": "poll"` in
 the event attributes so the two paths stay distinguishable.
 
-A polled ring is up to `poll_interval` seconds late. `10` is a reasonable
-compromise; drop it to `5` if you want the doorbell snappier and don't mind the
-extra cloud requests, or set `0` to switch polling off entirely.
+#### Burst polling keeps the ring quick without polling hard all day
+
+Polling every few seconds around the clock to catch an event that happens twice
+a day is wasteful, but a slow poll makes the doorbell feel broken. So the poller
+has two speeds.
+
+Motion *does* arrive over push, instantly — and someone reaching for the button
+has nearly always tripped motion on the way in. Any push is therefore treated as
+an early warning: it wakes the poller immediately and drops it to one poll a
+second for the next 30 seconds, which is where the press lands. Outside that
+window it idles back to `poll_interval`.
+
+In practice the ring shows up about a second after the press, while the steady
+state stays at one request every `poll_interval` seconds. A ring with no
+preceding motion falls back to the slow path, so `poll_interval` still sets the
+worst case — `0` switches polling off entirely.
 
 The first sweep after a start only records what already exists, so old messages
 are not replayed as fresh events.
@@ -137,7 +150,8 @@ invalidate the stored session and ask for a new code.
 | anything else | either | `alarm`, raw code kept in the attributes |
 
 Motion arrives over push within a second or two; a ring only ever arrives by
-polling. Both paths are live at once, so events carry `"source": "push"` or
+polling, usually about a second after the press thanks to the burst described
+above. Both paths are live at once, so events carry `"source": "push"` or
 `"source": "poll"`, and a detection seen on both is emitted once — the second
 copy is suppressed and logged as a skipped duplicate.
 
