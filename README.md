@@ -71,11 +71,30 @@ serials:
 verification_codes:
   - serial: D1234567
     code: ABCDEF      # from the device label, needed to decrypt snapshots
+mfa_code: ""          # only for the first login, see below
 log_level: info
 ```
 
 `mqtt_host` / `mqtt_port` / `mqtt_username` / `mqtt_password` are optional and
 only needed for a broker the Supervisor does not manage.
+
+## Two factor authentication
+
+If your EZVIZ account has 2FA, the first start stops with:
+
+```
+EZVIZ requires a two factor code, which it has just sent to your email.
+```
+
+Paste the digits from that email into **`mfa_code`** in the Configuration tab,
+save, and restart the add-on. The session is then written to the add-on's
+persistent storage and refreshed automatically from there, so this is a one time
+step — clear `mfa_code` again afterwards, the code is single use.
+
+The add-on also pins its own EZVIZ device identity in `/data`. `pyezvizapi`
+normally derives that identity from the host MAC address, which a container
+changes every time it is recreated — meaning an add-on update would otherwise
+invalidate the stored session and ask for a new code.
 
 ## Alert type codes
 

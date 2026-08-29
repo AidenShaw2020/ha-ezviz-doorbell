@@ -29,13 +29,19 @@ import threading
 import time
 from typing import Any
 
+import hashlib
 import paho.mqtt.client as mqtt
+from pyezvizapi import client as ezviz_client_module
+from pyezvizapi import constants as ezviz_constants
+from pyezvizapi import mqtt as ezviz_mqtt_module
 from pyezvizapi.client import EzvizClient
 from pyezvizapi.exceptions import EzvizAuthVerificationCode, PyEzvizError
 from pyezvizapi.utils import decrypt_image
 import requests
 
 OPTIONS_PATH = Path("/data/options.json")
+TOKEN_PATH = Path("/data/token.json")
+FEATURE_CODE_PATH = Path("/data/feature_code")
 SUPERVISOR_URL = "http://supervisor"
 DISCOVERY_PREFIX = "homeassistant"
 BASE_TOPIC = "ezviz_push"
@@ -55,6 +61,39 @@ ALERT_TYPE_MAP: dict[int, str] = {
 }
 
 _LOGGER = logging.getLogger("ezviz_push")
+
+
+def pin_feature_code() -> None:
+    """Give this add-on a stable EZVIZ device identity.
+
+    pyezvizapi derives its ``featureCode`` from the host MAC address, and a
+    container gets a fresh MAC whenever it is recreated - which happens on
+    every add-on update. EZVIZ ties the saved session to that code, so without
+    pinning it the stored token is rejected and two factor authentication is
+    demanded all over again. Generate the code once and keep it in /data.
+    """
+    try:
+        if FEATURE_CODE_PATH.exists():
+            code = FEATURE_CODE_PATH.read_text(encoding="utf-8").strip()
+        else:
+            code = hashlib.md5(os.urandom(16)).hexdigest()
+            FEATURE_CODE_PATH.write_text(code, encoding="utf-8")
+    except OSError as err:
+        _LOGGER.warning(
+            "Could not persist a stable feature code (%s); two factor auth may"
+            " be requested again after an update",
+            err,
+        )
+        return
+
+    # client.py and mqtt.py import the constant by value, so each module needs
+    # patching, as does the shared request header built from it at import time.
+    for module in (ezviz_constants, ezviz_client_module, ezviz_mqtt_module):
+        if hasattr(module, "FEATURE_CODE"):
+            module.FEATURE_CODE = code
+    header = getattr(ezviz_constants, "REQUEST_HEADER", None)
+    if isinstance(header, dict):
+        header["featureCode"] = code
 
 
 def load_options() -> dict[str, Any]:
@@ -318,6 +357,63 @@ class EzvizPushBridge:
             if name:
                 self._names[serial] = name
 
+    def _load_token(self) -> dict[str, Any] | None:
+        """Return the saved session token, if there is a usable one."""
+        if not TOKEN_PATH.exists():
+            return None
+        try:
+            return json.loads(TOKEN_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as err:
+            _LOGGER.warning("Saved session is unreadable (%s), logging in again", err)
+            return None
+
+    def _save_token(self, client: EzvizClient) -> None:
+        """Persist the session so the next start needs no two factor code."""
+        try:
+            TOKEN_PATH.write_text(
+                json.dumps(client.export_token()), encoding="utf-8"
+            )
+        except (OSError, TypeError, ValueError) as err:
+            _LOGGER.warning("Could not save the session: %s", err)
+
+    def authenticate(self) -> EzvizClient:
+        """Log in, reusing a saved session when one exists.
+
+        A stored token is refreshed through its refresh session id, which EZVIZ
+        allows without a second factor. The two factor code is therefore only
+        ever needed for the very first login.
+        """
+        token = self._load_token()
+        client = EzvizClient(
+            self._options["ezviz_username"],
+            self._options["ezviz_password"],
+            self._region,
+            token=token,
+        )
+
+        mfa_code = str(self._options.get("mfa_code") or "").strip()
+
+        if token:
+            _LOGGER.info("Reusing the saved EZVIZ session")
+            client.login()
+        elif mfa_code:
+            if not mfa_code.isdigit():
+                raise PyEzvizError(
+                    f"mfa_code {mfa_code!r} is not numeric - copy the digits"
+                    " from the EZVIZ email"
+                )
+            client.login(sms_code=int(mfa_code))
+            _LOGGER.info(
+                "Logged in with the two factor code. You can clear 'mfa_code'"
+                " in the add-on options now - it is single use and the session"
+                " has been saved."
+            )
+        else:
+            client.login()
+
+        self._save_token(client)
+        return client
+
     def run(self) -> None:
         """Run until stopped, reconnecting to EZVIZ as needed."""
         self.connect_mqtt()
@@ -325,18 +421,16 @@ class EzvizPushBridge:
         while not self._stop.is_set():
             push_client = None
             try:
-                client = EzvizClient(
-                    self._options["ezviz_username"],
-                    self._options["ezviz_password"],
-                    self._region,
-                )
                 try:
-                    client.login()
+                    client = self.authenticate()
                 except EzvizAuthVerificationCode:
+                    TOKEN_PATH.unlink(missing_ok=True)
                     _LOGGER.error(
-                        "EZVIZ demands a two factor code. Log in once in the"
-                        " EZVIZ app, approve this login, then restart the"
-                        " add-on."
+                        "EZVIZ requires a two factor code, which it has just"
+                        " sent to your email. Paste it into the 'mfa_code'"
+                        " option in the add-on Configuration tab, save, and"
+                        " restart the add-on. The session is stored afterwards,"
+                        " so this is a one time step."
                     )
                     self._stop.wait(300)
                     continue
@@ -392,6 +486,8 @@ def main() -> int:
     if not options.get("ezviz_username") or not options.get("ezviz_password"):
         _LOGGER.error("Set ezviz_username and ezviz_password in the add-on options")
         return 1
+
+    pin_feature_code()
 
     bridge = EzvizPushBridge(options)
 
