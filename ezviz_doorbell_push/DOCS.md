@@ -98,6 +98,12 @@ So the add-on also polls the same message feed the official app reads, every
 `poll_interval` seconds, and emits anything new — tagged `"source": "poll"` in
 the event attributes so the two paths stay distinguishable.
 
+> **Changing the default does not change your install.** The Supervisor keeps
+> the options you already saved, so an add-on update never rewrites
+> `poll_interval` for you. If rings feel slow, check the value in the
+> Configuration tab against the `poll_interval=` figure the add-on logs on
+> startup.
+
 #### Burst polling keeps the ring quick without polling hard all day
 
 Polling every few seconds around the clock to catch an event that happens twice

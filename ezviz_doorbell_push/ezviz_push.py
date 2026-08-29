@@ -773,6 +773,14 @@ class EzvizPushBridge:
                         name="ezviz-poll",
                         daemon=True,
                     ).start()
+                    _LOGGER.info(
+                        "Polling every %ss, dropping to %ss for %ss after any"
+                        " push. A ring is only ever seen by polling, so this"
+                        " interval is its worst case latency.",
+                        poll_interval,
+                        BURST_INTERVAL,
+                        BURST_SECONDS,
+                    )
                 else:
                     _LOGGER.info("Message polling is off (poll_interval=0)")
 
@@ -818,8 +826,10 @@ def main() -> int:
     # Echo the effective configuration, so a setting that did not take can be
     # spotted from the log rather than guessed at.
     _LOGGER.info(
-        "Starting: log_level=%s region=%s serials=%s verification_codes_for=%s",
+        "Starting: log_level=%s poll_interval=%ss region=%s serials=%s"
+        " verification_codes_for=%s",
         options.get("log_level"),
+        options.get("poll_interval"),
         options.get("ezviz_region"),
         options.get("serials") or "(all devices)",
         [
