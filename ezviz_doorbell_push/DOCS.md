@@ -128,17 +128,24 @@ invalidate the stored session and ask for a new code.
 
 ## Alert type codes
 
-| `alert_type_code` | Event type |
-| --- | --- |
-| `0` | `ring` — doorbell button (push) |
-| `10000` | `motion` — PIR (push) |
-| anything else | `alarm`, raw code kept in the attributes |
+| Code | Path | Event type |
+| --- | --- | --- |
+| `subType 2701` | poll | `ring` — doorbell button |
+| `alert_type_code 10120` | push | `motion` — AI human detection |
+| `alert_type_code 10000` | push | `motion` — PIR |
+| `alert_type_code 0` | push | `ring` |
+| anything else | either | `alarm`, raw code kept in the attributes |
 
-`subType 2701` maps to `ring` on the polled feed. Push codes observed in
-[RenierM26/ha-ezviz#112](https://github.com/RenierM26/ha-ezviz/issues/112), on a
-DP1C. If your ring arrives as `alarm`, the log prints the unmapped code and the
-event attributes carry it — add it to `PUSH_ALERT_TYPES` (push) or
-`POLL_SUBTYPES` (polled) in `ezviz_push.py`.
+Motion arrives over push within a second or two; a ring only ever arrives by
+polling. Both paths are live at once, so events carry `"source": "push"` or
+`"source": "poll"`, and a detection seen on both is emitted once — the second
+copy is suppressed and logged as a skipped duplicate.
+
+`2701` and `10120` were captured from a live EP8x; `0` and `10000` come from
+[RenierM26/ha-ezviz#112](https://github.com/RenierM26/ha-ezviz/issues/112) on a
+DP1C. Anything unmapped is logged with its raw code and carries it in the event
+attributes — add it to `PUSH_ALERT_TYPES` (push) or `POLL_SUBTYPES` (polled) in
+`ezviz_push.py`.
 
 ## Automation example
 
@@ -164,9 +171,9 @@ Confirmed working against an EP8x: the ring is delivered, mapped to `ring`, and
 its encrypted snapshot decrypts. It arrives over the polling path — the alarm
 push channel stays silent for a ring, for the reason described above.
 
-Motion codes are still unverified on this model. Anything unmapped is reported
-as `alarm` with its raw code in the log and in the event attributes, which is
-what you need to extend the maps.
+Motion is confirmed too, arriving over push almost instantly as AI human
+detection. Anything unmapped is still reported as `alarm` with its raw code in
+the log and in the event attributes, which is what you need to extend the maps.
 
 ## tools/
 

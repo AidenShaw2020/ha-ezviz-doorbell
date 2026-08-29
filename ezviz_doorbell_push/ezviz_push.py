@@ -60,6 +60,9 @@ EVENT_TYPES = [EVENT_RING, EVENT_MOTION, EVENT_ALARM]
 PUSH_ALERT_TYPES: dict[int, str] = {
     0: EVENT_RING,
     10000: EVENT_MOTION,
+    # "AI Human Detection" - what an EP8x actually reports for motion. The
+    # descriptive title stays in the "alert" attribute.
+    10120: EVENT_MOTION,
 }
 
 # Polled messages carry "subType". A ring is 2701 - a *call*, not an alarm,
@@ -169,6 +172,10 @@ class EzvizPushBridge:
         self._stop = threading.Event()
         self._seen_messages: set[str] = set()
         self._poll_primed = False
+        self._recent: dict[str, float] = {}
+        # Wide enough to cover a poll arriving after a push for the same event,
+        # but no wider, so two genuine presses are not merged into one.
+        self._dedupe_window = max(15, int(options.get("poll_interval") or 0) + 10)
 
     # ------------------------------------------------------------------
     # Local MQTT
@@ -346,27 +353,70 @@ class EzvizPushBridge:
         )
         if event_type == EVENT_ALARM:
             _LOGGER.info(
-                "Alert code %s is not mapped yet. If this was the doorbell"
-                " button, add %s to ALERT_TYPE_MAP.",
-                raw_code,
+                "Push alert code %s is not mapped yet; add it to"
+                " PUSH_ALERT_TYPES to give it a proper event type.",
                 raw_code,
             )
 
-        self.announce(serial)
-        self._publish(
-            f"{BASE_TOPIC}/{serial}/event",
-            json.dumps(
-                {
-                    "event_type": event_type,
-                    "alert_type_code": raw_code,
-                    "alert": msg.get("alert"),
-                    "time": ext.get("time"),
-                    "msg_id": ext.get("msgId"),
-                }
-            ),
+        self.emit_event(
+            serial,
+            event_type,
+            {
+                "event_type": event_type,
+                "alert_type_code": raw_code,
+                "alert": msg.get("alert"),
+                "time": ext.get("time"),
+                "msg_id": ext.get("msgId"),
+                "source": "push",
+            },
+            ext.get("default_pic_url"),
         )
 
-        if pic_url := ext.get("default_pic_url"):
+    def _should_emit(self, serial: str, event_type: str, msg_id: Any) -> bool:
+        """Return False when this event already went out by the other path.
+
+        Push and polling overlap: motion shows up on both within a second or
+        two. Without this the event entity fires twice for one detection.
+        """
+        now = time.monotonic()
+        self._recent = {
+            key: seen
+            for key, seen in self._recent.items()
+            if now - seen < self._dedupe_window
+        }
+
+        keys = [f"{serial}|{event_type}"]
+        if msg_id:
+            keys.append(f"msg|{msg_id}")
+
+        if any(key in self._recent for key in keys):
+            return False
+
+        for key in keys:
+            self._recent[key] = now
+        return True
+
+    def emit_event(
+        self,
+        serial: str,
+        event_type: str,
+        payload: dict[str, Any],
+        pic_url: str | None = None,
+    ) -> None:
+        """Publish one event, unless the other path already delivered it."""
+        if not self._should_emit(serial, event_type, payload.get("msg_id")):
+            _LOGGER.info(
+                "Skipping duplicate %s for %s, already delivered via %s",
+                event_type,
+                serial,
+                "poll" if payload.get("source") == "poll" else "push",
+            )
+            return
+
+        self.announce(serial)
+        self._publish(f"{BASE_TOPIC}/{serial}/event", json.dumps(payload))
+
+        if pic_url:
             self.publish_snapshot(serial, pic_url)
 
     def handle_polled(self, item: dict[str, Any]) -> None:
@@ -405,23 +455,20 @@ class EzvizPushBridge:
                 EVENT_ALARM,
             )
 
-        self.announce(serial)
-        self._publish(
-            f"{BASE_TOPIC}/{serial}/event",
-            json.dumps(
-                {
-                    "event_type": event_type,
-                    "alert_type_code": raw_code,
-                    "alert": item.get("title") or item.get("detail"),
-                    "time": item.get("timeStr") or item.get("time"),
-                    "msg_id": item.get("msgId"),
-                    "source": "poll",
-                }
-            ),
+        pic_url = item.get("pic")
+        self.emit_event(
+            serial,
+            event_type,
+            {
+                "event_type": event_type,
+                "alert_type_code": raw_code,
+                "alert": item.get("title") or item.get("detail"),
+                "time": item.get("timeStr") or item.get("time"),
+                "msg_id": item.get("msgId"),
+                "source": "poll",
+            },
+            str(pic_url).split(";")[0] if pic_url else None,
         )
-
-        if pic_url := item.get("pic"):
-            self.publish_snapshot(serial, str(pic_url).split(";")[0])
 
     def poll_messages(
         self, client: EzvizClient, interval: int, cycle_stop: threading.Event
