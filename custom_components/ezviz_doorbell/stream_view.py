@@ -23,7 +23,7 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.network import NoURLAvailableError, get_url
 
-from .const import CONF_STREAM_TOKEN, DOMAIN, ENCRYPTED_CLIP_SECONDS
+from .const import CONF_STREAM_TOKEN, DOMAIN
 from .vendor.pyezvizapi.exceptions import PyEzvizError
 
 _LOGGER = logging.getLogger(__name__)
@@ -100,28 +100,20 @@ class EzvizStreamView(HomeAssistantView):
         # it awake before opening the stream.
         await coordinator.async_keep_awake(serial)
 
-        encrypted = bool(coordinator.data[serial].raw.get("encrypted"))
-        media_key = coordinator.verification_code(serial)
-        if encrypted and media_key is None:
-            # Without the key the stream decodes to noise, and EZVIZ will not
-            # always hand this account the key over the API.
+        if coordinator.data[serial].raw.get("encrypted"):
+            # An encrypted stream cannot be decrypted as it arrives, only in
+            # one piece afterwards - which is a clip, not a live view: nothing
+            # for fifteen seconds, then fifteen seconds of video, then the end
+            # of the stream. Home Assistant treats that as a broken stream and
+            # starts again, forever. Stills are the honest answer.
             _LOGGER.warning(
-                "Video encryption is on for %s and no verification code is"
-                " configured for it, so there is no live video. Switch video"
-                " encryption off in the EZVIZ app, or put the code from the"
-                " device's label into the integration's options",
+                "Video encryption is on for %s, so there is no live video to"
+                " serve - an encrypted stream can only be fetched as a clip."
+                " Switch video encryption off for this device in the EZVIZ app"
+                " to get live video. Snapshots work either way",
                 serial,
             )
-            return web.Response(status=501, text="Encrypted, and no key to use")
-
-        if encrypted:
-            _LOGGER.info(
-                "Video encryption is on for %s, so the stream is a %.0fs clip."
-                " Switch video encryption off in the EZVIZ app for a"
-                " continuous stream",
-                serial,
-                ENCRYPTED_CLIP_SECONDS,
-            )
+            return web.Response(status=501, text="Video encryption is on")
 
         response = web.StreamResponse(
             headers={"Content-Type": "video/mp2t", "Cache-Control": "no-store"}
@@ -134,14 +126,7 @@ class EzvizStreamView(HomeAssistantView):
         def _produce() -> None:
             """Fill the queue from the cloud stream (executor thread)."""
             try:
-                copy_cloud_stream_to_mpegts(
-                    coordinator.client,
-                    serial,
-                    writer,
-                    decrypt_video=encrypted,
-                    media_key=media_key,
-                    duration_seconds=ENCRYPTED_CLIP_SECONDS if encrypted else None,
-                )
+                copy_cloud_stream_to_mpegts(coordinator.client, serial, writer)
             except (BrokenPipeError, ConnectionResetError):
                 _LOGGER.debug("Live stream for %s closed by the client", serial)
             except (PyEzvizError, OSError, ValueError, ImportError) as err:

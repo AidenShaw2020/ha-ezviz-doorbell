@@ -81,19 +81,17 @@ class EzvizDoorbellCamera(EzvizDoorbellEntity, Camera):
     ) -> bool:
         """Return whether this camera's video can actually be played.
 
-        An encrypted stream needs the device's verification code, which EZVIZ
-        does not hand every account over the API - so without one configured
-        there is nothing to decode it with.
+        An encrypted stream can only be decrypted once it has all arrived,
+        which makes it a clip rather than a live view - a wait, a few seconds
+        of video, and an end that Home Assistant reads as a broken stream and
+        retries for ever. So an encrypted camera is offered as stills.
         """
         if not coordinator.data[serial].raw.get("encrypted"):
             return True
-        if coordinator.verification_code(serial) is not None:
-            return True
         _LOGGER.info(
-            "%s has video encryption on and no verification code configured,"
-            " so it is offered as stills rather than live video. Switch video"
-            " encryption off in the EZVIZ app, or put the code from the"
-            " device's label into the integration's options",
+            "%s has video encryption on, so it is offered as stills rather"
+            " than live video. Switch video encryption off for it in the EZVIZ"
+            " app to get live video; snapshots work either way",
             serial,
         )
         return False

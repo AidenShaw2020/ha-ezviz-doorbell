@@ -421,17 +421,29 @@ async def test_an_encrypted_camera_offers_no_stream_without_a_key(
     assert hass.states.get("camera.front_door").attributes["supported_features"] == 0
 
 
-async def test_a_verification_code_brings_the_stream_back(
+async def test_a_code_does_not_make_an_encrypted_camera_streamable(
     hass: HomeAssistant, ezviz_client: MagicMock
 ) -> None:
-    """With the code from the device label there is something to decode with.
+    """The code decrypts pictures; it cannot make a clip into a live view.
 
-    Through the old single text option, which is kept working so that an
-    upgrade does not drop a code somebody had already set.
+    An encrypted stream only decrypts once it has all arrived, so it is a wait
+    followed by a few seconds of video followed by an end - which Home
+    Assistant reads as a broken stream and retries for ever.
     """
     await _setup_with(
         hass, ezviz_client, {CONF_VERIFICATION_CODES: f"{SERIAL}=ABCDEF"}
     )
+
+    assert RAW_STATUS["encrypted"] is True
+    assert hass.states.get("camera.front_door").attributes["supported_features"] == 0
+
+
+async def test_a_camera_without_encryption_streams(
+    hass: HomeAssistant, ezviz_client: MagicMock
+) -> None:
+    """Switch video encryption off and there is nothing in the way."""
+    with patch.dict(RAW_STATUS, {"encrypted": False}):
+        await _setup_with(hass, ezviz_client, {})
 
     assert (
         hass.states.get("camera.front_door").attributes["supported_features"]
@@ -467,11 +479,11 @@ async def test_only_the_chosen_cameras_are_built(
     assert hass.states.get("camera.front_door") is None
 
 
-async def test_a_code_kept_under_its_camera_unlocks_the_stream(
+async def test_a_code_kept_under_its_camera_is_used(
     hass: HomeAssistant, ezviz_client: MagicMock
 ) -> None:
     """A code belongs to one camera, so it is stored against one camera."""
-    await _setup_with(
+    entry = await _setup_with(
         hass,
         ezviz_client,
         {},
@@ -485,10 +497,13 @@ async def test_a_code_kept_under_its_camera_unlocks_the_stream(
         ],
     )
 
-    assert (
-        hass.states.get("camera.front_door").attributes["supported_features"]
-        == CameraEntityFeature.STREAM
-    )
+    with patch(
+        "custom_components.ezviz_doorbell.coordinator.decrypt_image",
+        return_value=b"plain",
+    ) as decrypt:
+        entry.runtime_data._decrypt(SERIAL, b"hikencodepicture and more")
+
+    decrypt.assert_called_once_with(b"hikencodepicture and more", "ABCDEF")
 
 
 async def test_adding_a_code_takes_effect_without_a_restart(

@@ -14,6 +14,7 @@ import secrets
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 
 from .const import CONF_STREAM_TOKEN, DOMAIN
 from .coordinator import (
@@ -73,6 +74,25 @@ async def async_unload_entry(
     if unloaded and (coordinator := getattr(entry, "runtime_data", None)):
         await coordinator.async_unload()
     return unloaded
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant,
+    entry: EzvizDoorbellConfigEntry,
+    device_entry: dr.DeviceEntry,
+) -> bool:
+    """Let a camera this account no longer handles be deleted.
+
+    Untick a camera in the options and its entities stop being built, but the
+    device it left behind stays in the registry until somebody removes it. This
+    is what makes the delete button on its page work.
+    """
+    handled = entry.runtime_data.data
+    return not any(
+        identifier[1] in handled
+        for identifier in device_entry.identifiers
+        if identifier[0] == DOMAIN
+    )
 
 
 async def _async_options_updated(
