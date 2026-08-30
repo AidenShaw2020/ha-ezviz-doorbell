@@ -293,24 +293,62 @@ DP1C. Anything unmapped is logged with its raw code — add it in the options, o
 to `PUSH_ALERT_TYPES` / `POLL_SUBTYPES` in `const.py` if you would rather it
 shipped with the integration.
 
-## Automation example
+## Notifying a phone, with the picture
+
+The doorbell and motion entities fire on their own, so an automation can tell
+the two apart without looking at anything. The picture arrives a moment after
+the event - it has to be fetched and decrypted first - so the automation waits
+for the image entity to change rather than sending whatever was there before.
 
 ```yaml
-automation:
-  - alias: "Doorbell pressed"
-    triggers:
+alias: Doorbell and motion to the phone
+mode: queued
+max: 5
+variables:
+  # trigger.id is replaced by wait_for_trigger below, so keep it now.
+  kind: "{{ trigger.id }}"
+triggers:
+  - trigger: state
+    entity_id: event.front_door_doorbell
+    not_from: ["unknown", "unavailable"]
+    id: ring
+  - trigger: state
+    entity_id: event.front_door_motion
+    not_from: ["unknown", "unavailable"]
+    id: motion
+actions:
+  - wait_for_trigger:
       - trigger: state
-        entity_id: event.front_door_doorbell
-    actions:
-      - action: notify.mobile_app_phone
-        data:
-          message: "Someone is at the door"
-          data:
-            image: /api/camera_proxy/camera.front_door
+        entity_id: image.front_door_last_snapshot
+        attribute: entity_picture
+    timeout: "00:00:10"
+    continue_on_timeout: true
+  - action: notify.mobile_app_your_phone
+    data:
+      title: "{{ 'Someone is at the door' if kind == 'ring' else 'Motion outside' }}"
+      message: "{{ now().strftime('%H:%M') }}"
+      data:
+        image: "{{ state_attr('image.front_door_last_snapshot', 'entity_picture') }}"
+        push:
+          interruption-level: "{{ 'time-sensitive' if kind == 'ring' else 'active' }}"
 ```
 
-The doorbell event entity only ever fires for a press, so no condition on the
-event type is needed. Use `event.front_door_motion` for motion.
+Worth knowing:
+
+- **`entity_picture`, not a fixed URL.** The image entity's `entity_picture`
+  attribute is a signed link that changes every time the picture does, which is
+  both what lets the phone fetch it without logging in and what stops iOS
+  showing yesterday's snapshot from its cache.
+- **Apple Watch needs nothing.** iOS mirrors the notification, image and all,
+  whenever the phone is locked.
+- **`time-sensitive`** gets a ring through Focus and a Watch on wrist
+  detection. Leave motion on `active` unless you want to hear about every cat.
+- **A live view in the notification**: add `entity_id: camera.front_door` beside
+  `image` and iOS offers the camera when the notification is pulled down. It
+  needs the camera to be reachable from wherever the phone is, so it wants
+  Nabu Casa or a working remote setup; the picture does not.
+- Replace `front_door` and `your_phone` with your own; the phone's service name
+  is under **Developer tools → Actions → notify**.
 
 ---
 
