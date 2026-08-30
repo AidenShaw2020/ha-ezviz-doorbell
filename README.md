@@ -7,22 +7,7 @@ that hibernates on battery, **decrypted snapshots** you can leave encryption
 switched on for, and the **full set of device entities** — battery, switches,
 work mode, firmware and the rest.
 
-There are two ways to install it. They do the same job and do not need each
-other.
-
-| | **Integration** (`custom_components/ezviz_doorbell`) | **Add-on** (`ezviz_doorbell_push`) |
-| --- | --- | --- |
-| Live video | a real `camera` entity | a URL you paste into a Generic Camera |
-| Two factor code | a step in the setup dialog | an option you type in and restart for |
-| Needs an MQTT broker | no | yes |
-| Install | HACS or a copy into `config/custom_components` | Add-on Store, from this repository |
-| Updates | with a Home Assistant restart | independently, from the Supervisor |
-
-**The integration is the one to use.** The add-on came first, still works, and
-is documented in [ezviz_doorbell_push/DOCS.md](ezviz_doorbell_push/DOCS.md); it
-will stay until the integration has been proven on real hardware.
-
-Both run beside the built-in `ezviz` integration and change nothing about it.
+It runs beside the built-in `ezviz` integration and changes nothing about it.
 
 ---
 
@@ -331,19 +316,19 @@ event type is needed. Use `event.front_door_motion` for motion.
 
 ## Status
 
-The **add-on** is confirmed working against an EP8x: the ring is delivered and
-mapped to `ring`, its encrypted snapshot decrypts, and motion arrives over push
-as AI human detection almost instantly.
-
-The **integration** is the same logic rebuilt on Home Assistant's own platforms,
-and it has not yet been run against a real doorbell — the classification, the
-wake sequence and the cloud stream are carried over, but the config flow, the
-entities and the camera want a first outing before anyone calls them proven. If
-something misbehaves, the log names the device and what was refused.
+Confirmed working against an EP8x on a real account: the ring arrives and is
+mapped to `ring`, motion arrives separately, snapshots decrypt, the wake button
+wakes the device, and an encrypted camera plays live video.
 
 Which of the cloud calls a given model answers varies by firmware. Everything is
-built from what the device itself reports, and a request a device refuses is
-logged rather than retried.
+built from what the device itself reports, a request a device refuses is logged
+rather than retried, and a capability the device does not advertise does not
+become an entity that can only fail.
+
+This started as a Home Assistant add-on, which is where the event classification
+and the snapshot decryption were worked out. The add-on was removed once the
+integration did everything it did and more; it is still in the history if anyone
+needs it.
 
 What *is* covered is that the integration loads and behaves, against Home
 Assistant itself (2026.2) with the cloud mocked out - every platform's
@@ -365,9 +350,8 @@ for credentials interactively and store nothing.
   latest alarm, then downloads the snapshot and reports whether it is encrypted.
 - `ezviz_push_bridge.py` — a plain push listener forwarding to a Home Assistant
   webhook. Handy for discovering your alert codes.
-- `make_icons.py` — resizes `assets/` into the add-on's `icon.png` and
-  `logo.png`, and into the four sizes [brands/](brands/) needs for the
-  integration.
+- `make_icons.py` — resizes `assets/` into the four sizes [brands/](brands/)
+  needs.
 
 ## License
 

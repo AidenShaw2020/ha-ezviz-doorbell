@@ -1,9 +1,9 @@
 """Adding an EZVIZ account, and changing how it is polled afterwards.
 
-The add-on this integration grew out of asked for a two factor code through a
-YAML option, which meant editing configuration and restarting to get past a
-dialog the cloud only ever shows once. Here it is a step in the flow, and the
-same step comes back on its own if EZVIZ ever asks again.
+A two factor code is a step in the flow here, and the same step comes back on
+its own if EZVIZ ever asks again - rather than a setting to write down and
+restart for, which is how this project used to get past a dialog the cloud only
+ever shows once.
 
 EZVIZ says quite precisely why it turned a login down - a wrong password, a
 code that has expired, an account it has locked after too many tries - and all
