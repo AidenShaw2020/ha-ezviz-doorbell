@@ -300,6 +300,11 @@ the two apart without looking at anything. The picture arrives a moment after
 the event - it has to be fetched and decrypted first - so the automation waits
 for the image entity to change rather than sending whatever was there before.
 
+Wait on its **state**, which is the time the picture was taken and changes with
+every new one. Not on `entity_picture`: the token in it is rotated on a five
+minute timer that has nothing to do with when a picture arrives, so waiting for
+that waits for the wrong thing.
+
 ```yaml
 alias: Doorbell and motion to the phone
 mode: queued
@@ -320,9 +325,8 @@ actions:
   - wait_for_trigger:
       - trigger: state
         entity_id: image.front_door_last_snapshot
-        attribute: entity_picture
-    timeout: "00:00:10"
-    continue_on_timeout: true
+    timeout: "00:00:20"
+    continue_on_timeout: false
   - action: notify.mobile_app_your_phone
     data:
       title: "{{ 'Someone is at the door' if kind == 'ring' else 'Motion outside' }}"
