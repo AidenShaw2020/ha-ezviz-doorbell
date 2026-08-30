@@ -349,6 +349,12 @@ Worth knowing:
   working external URL - Nabu Casa, or your own remote access. Without one the
   image loads on Wi-Fi and fails everywhere else, which the app reports as a
   failed attachment.
+- **Check the app's own URLs, not just the server's.** The companion app keeps
+  an internal URL, used only on your home Wi-Fi, and an external one for
+  everywhere else; an app first set up at home often has nothing in the second.
+  If one address already works on both networks, put that one in both fields
+  and turn the Wi-Fi SSID condition off - then there is nothing to switch
+  between. It is under **Settings → Companion App → Connection** on the phone.
 - **A live view in the notification**: add `entity_id: camera.front_door` beside
   `image` and iOS offers the camera when the notification is pulled down. Same
   requirement, for the same reason.
