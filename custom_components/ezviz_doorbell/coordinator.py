@@ -19,11 +19,6 @@ import threading
 import time
 from typing import Any
 
-from pyezvizapi.camera import EzvizCamera
-from pyezvizapi.client import EzvizClient
-from pyezvizapi.constants import DeviceSwitchType
-from pyezvizapi.exceptions import EzvizAuthVerificationCode, PyEzvizError
-from pyezvizapi.utils import decrypt_image
 import requests
 
 from homeassistant.config_entries import ConfigEntry
@@ -57,17 +52,21 @@ from .const import (
     signal_event,
 )
 from .helpers import first_image_url
+from .vendor.pyezvizapi.camera import EzvizCamera
+from .vendor.pyezvizapi.client import EzvizClient
+from .vendor.pyezvizapi.constants import DeviceSwitchType
+from .vendor.pyezvizapi.exceptions import EzvizAuthVerificationCode, PyEzvizError
+from .vendor.pyezvizapi.utils import decrypt_image
 
 _LOGGER = logging.getLogger(__name__)
 
 HIK_ENCRYPTION_HEADER = b"hikencodepicture"
 
-# Home Assistant's built-in EZVIZ integration pins pyezvizapi 1.0.0.7 into the
-# same site-packages this integration installs 1.0.5.0 into, and whichever was
-# set up last is the one on disk. Rather than fail to load against the older
-# one, every feature it lacks is checked for and reported, and the parts that
-# still work keep working - which includes the doorbell ring itself, because
-# that arrives by polling rather than over push.
+# The library ships with this integration (see vendor/), so these checks should
+# never find anything missing. They stay as a safety net: if the bundled copy is
+# ever replaced by a thinner one, the integration says what it has lost and
+# carries on with the rest rather than failing to load - and the doorbell ring
+# survives almost anything, because it arrives by polling.
 _STATUS_ACCEPTS_REFRESH = "refresh" in inspect.signature(EzvizCamera.status).parameters
 
 # Method on EzvizClient -> what is lost without it.
@@ -98,11 +97,9 @@ def report_library(can_stream: bool) -> None:
     if not gaps:
         return
     _LOGGER.warning(
-        "An older pyezvizapi is installed than this integration asks for, so"
-        " these are unavailable: %s. Home Assistant's built-in EZVIZ"
-        " integration pins that older version into the same place; remove the"
-        " built-in EZVIZ integration and restart Home Assistant to get them"
-        " back. This integration replaces it.",
+        "The copy of pyezvizapi bundled with this integration is not the one it"
+        " expects, so these are unavailable: %s. Reinstall the integration to"
+        " restore them.",
         "; ".join(gaps),
     )
 
@@ -352,9 +349,9 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
             # again at warning level only makes the same news look like two
             # separate problems.
             _LOGGER.info(
-                "The installed pyezvizapi cannot open the push channel, so"
-                " motion will arrive by polling rather than instantly. The"
-                " doorbell ring is unaffected - it only ever arrives by polling"
+                "The bundled pyezvizapi cannot open the push channel, so motion"
+                " will arrive by polling rather than instantly. The doorbell"
+                " ring is unaffected - it only ever arrives by polling"
             )
             return
         try:
@@ -697,11 +694,18 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
 
         This is also what wakes a sleeping battery camera: the cloud has to
         reach the device to get a fresh frame out of it.
+
+        Raises:
+            HomeAssistantError: If the installed pyezvizapi cannot capture.
         """
 
         if not hasattr(self.client, "capture_picture"):
-            _LOGGER.debug("The installed pyezvizapi cannot capture a picture")
-            return None
+            # Pressing a button and having nothing happen, with nothing in the
+            # log either, is worse than being told why.
+            raise HomeAssistantError(
+                "The bundled pyezvizapi cannot take a picture on demand;"
+                " reinstall the integration."
+            )
 
         def _capture() -> bytes | None:
             assert self.client is not None
@@ -799,7 +803,7 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
         try:
             woke = bool(await self.async_capture(serial)) or woke
         except (PyEzvizError, OSError, HomeAssistantError) as err:
-            _LOGGER.debug("Wake %s: capture failed (%s)", serial, err)
+            _LOGGER.info("Wake %s: could not take a picture (%s)", serial, err)
 
         if not woke:
             _LOGGER.warning(

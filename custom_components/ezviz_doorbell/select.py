@@ -6,8 +6,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from pyezvizapi.client import EzvizClient
-
 from homeassistant.components.select import SelectEntity, SelectEntityDescription
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
@@ -25,6 +23,7 @@ from .const import (
 from .coordinator import DeviceData, EzvizDoorbellCoordinator
 from .entity import EzvizDoorbellEntity
 from .helpers import display_mode, night_vision_mode, option_key
+from .vendor.pyezvizapi.client import EzvizClient
 
 
 @dataclass(frozen=True, kw_only=True)

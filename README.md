@@ -22,9 +22,7 @@ other.
 is documented in [ezviz_doorbell_push/DOCS.md](ezviz_doorbell_push/DOCS.md); it
 will stay until the integration has been proven on real hardware.
 
-The **add-on** runs beside the built-in `ezviz` integration and changes nothing
-about it. The **integration replaces it** — see below for why they cannot share
-a Home Assistant.
+Both run beside the built-in `ezviz` integration and change nothing about it.
 
 ---
 
@@ -116,29 +114,26 @@ because the session is stored and refreshed from then on. Needs Home Assistant
 - **Extra alert codes that mean a ring / motion** — comma separated, only needed
   for a model whose codes are not recognised yet.
 
-### It replaces the built-in EZVIZ integration
+### It runs alongside the built-in EZVIZ integration
 
 Both talk to EZVIZ through the same library, `pyezvizapi`, and they need
 different versions of it: Home Assistant pins `1.0.0.7` for the built-in
 integration, while the push channel, on-demand snapshots, the wake request and
 the cloud stream only exist from `1.0.5.0`. There is one `site-packages` per
-Home Assistant, so whichever was set up last decides which version is on disk,
-and they overwrite each other on every restart.
+Home Assistant, so installed side by side the two versions overwrite each other
+on every restart, and whichever integration lost the race that time breaks.
 
-**Remove the built-in EZVIZ integration and restart Home Assistant.** This one
-does everything it did.
+So this integration does not install the library at all. It carries its own
+copy in [custom_components/ezviz_doorbell/vendor/](custom_components/ezviz_doorbell/vendor/),
+imports it from there under its own name, and leaves whatever is in
+`site-packages` alone. Keep the built-in integration, remove it, install them in
+either order — none of it matters any more.
 
-Left in place, this integration still loads and still delivers the doorbell
-ring — that arrives by polling, which the older library can do — but it says in
-the log what it has lost:
-
-```
-An older pyezvizapi is installed than this integration asks for, so these are
-unavailable: instant motion over push (polling still delivers events);
-snapshots and live stills taken on demand; asking a sleeping camera to stay
-awake; the detection type setting; keeping the session across restarts; live
-video from the cloud stream.
-```
+The bundled copy is unmodified pyezvizapi 1.0.5.0, Apache-2.0, from
+[RenierM26/pyEzvizApi](https://github.com/RenierM26/pyEzvizApi), with its
+licence beside it. Its own dependencies — `requests`, `xmltodict`,
+`pycryptodome`, `paho-mqtt` — are declared unpinned, so they cannot start the
+same fight.
 
 ## A ring is not an alarm, and neither is motion
 

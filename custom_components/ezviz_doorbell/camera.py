@@ -10,8 +10,10 @@ taken on demand, which is also what wakes a sleeping device.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from homeassistant.components.camera import Camera, CameraEntityFeature
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
@@ -26,6 +28,8 @@ from .const import (
 from .coordinator import EzvizDoorbellCoordinator
 from .entity import EzvizDoorbellEntity
 from .stream_view import stream_url
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -62,6 +66,7 @@ class EzvizDoorbellCamera(EzvizDoorbellEntity, Camera):
         if self._live_stream and coordinator.cloud_stream is not None:
             self._attr_supported_features = CameraEntityFeature.STREAM
         self._capture_lock = asyncio.Lock()
+        self._capture_refused = False
 
     @property
     def frame_interval(self) -> float:
@@ -103,4 +108,14 @@ class EzvizDoorbellCamera(EzvizDoorbellEntity, Camera):
                 return self.device.snapshot
 
         async with self._capture_lock:
-            return await self.coordinator.async_capture(self._serial) or device.snapshot
+            try:
+                fresh = await self.coordinator.async_capture(self._serial)
+            except HomeAssistantError as err:
+                # The card asks for a picture on its own schedule, so this
+                # cannot be raised at it - but it should be said once.
+                if not self._capture_refused:
+                    self._capture_refused = True
+                    _LOGGER.warning("Cannot take a picture of %s: %s", self.name, err)
+                return device.snapshot
+            self._capture_refused = False
+            return fresh or device.snapshot

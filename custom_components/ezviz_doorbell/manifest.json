@@ -1,14 +1,26 @@
 {
   "domain": "ezviz_doorbell",
   "name": "EZVIZ Doorbell",
-  "codeowners": ["@AidenShaw2020"],
+  "codeowners": [
+    "@AidenShaw2020"
+  ],
   "config_flow": true,
-  "dependencies": ["http", "stream"],
+  "dependencies": [
+    "http",
+    "stream"
+  ],
   "documentation": "https://github.com/AidenShaw2020/ha-ezviz-doorbell",
   "integration_type": "hub",
   "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/AidenShaw2020/ha-ezviz-doorbell/issues",
-  "loggers": ["pyezvizapi"],
-  "requirements": ["pyezvizapi==1.0.5.0"],
-  "version": "0.1.4"
+  "loggers": [
+    "custom_components.ezviz_doorbell"
+  ],
+  "requirements": [
+    "requests",
+    "xmltodict",
+    "pycryptodome",
+    "paho-mqtt"
+  ],
+  "version": "0.2.0"
 }

@@ -17,13 +17,19 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 import pytest
-from pyezvizapi.exceptions import EzvizAuthVerificationCode, PyEzvizError
 
 from custom_components.ezviz_doorbell.const import (
     CONF_REGION,
     CONF_TOKEN,
     DEFAULT_REGION,
     DOMAIN,
+)
+
+# The integration carries its own copy of the library, so these have to be the
+# exception classes it will actually be catching.
+from custom_components.ezviz_doorbell.vendor.pyezvizapi.exceptions import (  # noqa: E402
+    EzvizAuthVerificationCode,
+    PyEzvizError,
 )
 
 ACCOUNT = {

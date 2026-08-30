@@ -11,8 +11,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from pyezvizapi.client import EzvizClient
-
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
@@ -22,6 +20,7 @@ from . import EzvizDoorbellConfigEntry
 from .const import DIAGNOSTIC_SWITCHES, SWITCH_ICONS, SWITCH_NAMES
 from .coordinator import DeviceData, EzvizDoorbellCoordinator
 from .entity import EzvizDoorbellEntity
+from .vendor.pyezvizapi.client import EzvizClient
 
 
 @dataclass(frozen=True, kw_only=True)

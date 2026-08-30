@@ -18,13 +18,13 @@ import logging
 import secrets
 
 from aiohttp import web
-from pyezvizapi.exceptions import PyEzvizError
 
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.network import NoURLAvailableError, get_url
 
 from .const import CONF_STREAM_TOKEN, DOMAIN, ENCRYPTED_CLIP_SECONDS
+from .vendor.pyezvizapi.exceptions import PyEzvizError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,20 +32,14 @@ _LOGGER = logging.getLogger(__name__)
 def import_cloud_stream() -> Callable[..., None] | None:
     """Return pyezvizapi's cloud stream copier, or None if it has none.
 
-    The cloud stream arrived in pyezvizapi 1.0.5.0. Home Assistant's built-in
-    EZVIZ integration pins 1.0.0.7 into the same site-packages, and whichever
-    integration was set up last decides what is on disk - so this cannot be a
-    plain import at the top of the module, or an older library takes the whole
-    integration down with it, which is exactly what it did.
-
-    Nor is it enough to ask whether the module exists: after the newer files
-    are written, the older ones can still be the ones loaded, and importing the
-    new module then fails on a constant its own package no longer seems to
-    have. So the question is asked by importing, which is the only answer that
-    means anything. Run this in an executor - it reads from disk.
+    The library is bundled with the integration, so this should always find
+    it. It stays a question asked by importing rather than a plain import at
+    the top of the module: this once had to survive a half-replaced library on
+    the system, and there is no reason to make live video able to stop the
+    integration loading again. Run it in an executor - it reads from disk.
     """
     try:
-        from pyezvizapi.cloud_stream import (  # noqa: PLC0415
+        from .vendor.pyezvizapi.cloud_stream import (  # noqa: PLC0415
             copy_cloud_stream_to_mpegts,
         )
     except ImportError as err:
@@ -96,12 +90,11 @@ class EzvizStreamView(HomeAssistantView):
         copy_cloud_stream_to_mpegts = coordinator.cloud_stream
         if copy_cloud_stream_to_mpegts is None:
             _LOGGER.warning(
-                "This Home Assistant has pyezvizapi without the cloud stream."
-                " It is pinned to an older version by the built-in EZVIZ"
-                " integration; remove that integration and restart to get live"
-                " video. Snapshots work either way."
+                "The bundled pyezvizapi has no cloud stream, so there is no"
+                " live video to serve. Reinstall the integration. Snapshots"
+                " work either way."
             )
-            return web.Response(status=501, text="Live video needs pyezvizapi 1.0.5.0")
+            return web.Response(status=501, text="No cloud stream in this build")
 
         # A sleeping battery camera answers nothing, so ask the cloud to keep
         # it awake before opening the stream.

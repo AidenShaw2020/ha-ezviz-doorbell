@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from pyezvizapi.client import EzvizClient
-from pyezvizapi.exceptions import PyEzvizError
-
 from homeassistant.components.number import NumberEntity, NumberEntityDescription, NumberMode
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
@@ -13,6 +10,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import EzvizDoorbellConfigEntry
 from .coordinator import EzvizDoorbellCoordinator
 from .entity import EzvizDoorbellEntity
+from .vendor.pyezvizapi.client import EzvizClient
+from .vendor.pyezvizapi.exceptions import PyEzvizError
 
 SENSITIVITY = NumberEntityDescription(
     key="detection_sensitivity",

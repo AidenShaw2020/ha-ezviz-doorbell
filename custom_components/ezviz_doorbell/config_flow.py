@@ -18,8 +18,6 @@ from collections.abc import Mapping
 import logging
 from typing import Any
 
-from pyezvizapi.client import EzvizClient
-from pyezvizapi.exceptions import EzvizAuthVerificationCode, InvalidURL, PyEzvizError
 import voluptuous as vol
 
 from homeassistant.config_entries import (
@@ -47,6 +45,8 @@ from .const import (
     DEFAULT_STATUS_INTERVAL,
     DOMAIN,
 )
+from .vendor.pyezvizapi.client import EzvizClient
+from .vendor.pyezvizapi.exceptions import EzvizAuthVerificationCode, InvalidURL, PyEzvizError
 
 _LOGGER = logging.getLogger(__name__)
 
