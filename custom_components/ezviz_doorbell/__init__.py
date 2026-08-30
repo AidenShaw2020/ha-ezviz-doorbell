@@ -16,7 +16,11 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
 from .const import CONF_STREAM_TOKEN, DOMAIN
-from .coordinator import EzvizDoorbellCoordinator, report_library
+from .coordinator import (
+    EzvizDoorbellCoordinator,
+    config_signature,
+    report_library,
+)
 from .stream_view import EzvizStreamView, import_cloud_stream
 
 type EzvizDoorbellConfigEntry = ConfigEntry[EzvizDoorbellCoordinator]
@@ -76,13 +80,14 @@ async def _async_options_updated(
 ) -> None:
     """Reload when the options change; the intervals are read at setup.
 
-    This listener fires for any change to the entry, and the refreshed EZVIZ
-    session is written back to it whenever the integration starts. Reloading on
-    that would store a new session, fire the listener again, and never stop, so
-    only an actual change to the options counts.
+    This listener fires for any change to the entry - a refreshed session
+    written back at startup, or a camera's verification code added as a
+    subentry. Reloading on the session would store a new one, fire the listener
+    again and never stop, so only what the integration actually reads at setup
+    counts as a change.
     """
     coordinator = entry.runtime_data
-    if entry.options == coordinator.loaded_options:
+    if config_signature(entry) == coordinator.loaded_signature:
         return
     await hass.config_entries.async_reload(entry.entry_id)
 

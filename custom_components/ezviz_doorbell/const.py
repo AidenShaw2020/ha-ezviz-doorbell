@@ -22,7 +22,15 @@ CONF_LIVE_STREAM: Final = "live_stream"
 CONF_RING_CODES: Final = "ring_codes"
 CONF_MOTION_CODES: Final = "motion_codes"
 CONF_DEVICES: Final = "devices"
+# The old single text field of SERIAL=CODE pairs. Codes now live in a subentry
+# per camera; this is still read so that nobody's setting quietly disappears.
 CONF_VERIFICATION_CODES: Final = "verification_codes"
+
+# One subentry per camera that needs a key, which is what puts the code under
+# the camera it belongs to rather than in a list somewhere else.
+CAMERA_SUBENTRY: Final = "camera"
+CONF_SERIAL: Final = "serial"
+CONF_VERIFICATION_CODE: Final = "verification_code"
 
 DEFAULT_POLL_INTERVAL: Final = 5
 DEFAULT_STATUS_INTERVAL: Final = 60

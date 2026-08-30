@@ -32,13 +32,16 @@ from homeassistant.util import dt as dt_util
 from .const import (
     BURST_INTERVAL,
     BURST_SECONDS,
+    CAMERA_SUBENTRY,
     CONF_DEVICES,
     CONF_MOTION_CODES,
     CONF_POLL_INTERVAL,
     CONF_REGION,
     CONF_RING_CODES,
+    CONF_SERIAL,
     CONF_STATUS_INTERVAL,
     CONF_TOKEN,
+    CONF_VERIFICATION_CODE,
     CONF_VERIFICATION_CODES,
     DEFAULT_POLL_INTERVAL,
     DEFAULT_REGION,
@@ -174,7 +177,7 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
         self.cloud_stream: Callable[..., None] | None = None
         # What the options said when this coordinator was built, so a later
         # entry update can be told from a real options change.
-        self.loaded_options = dict(options)
+        self.loaded_signature = config_signature(entry)
 
         # pyezvizapi is synchronous and is called from executor threads by the
         # push handler, the message poll and every entity command, so its
@@ -201,9 +204,7 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
         # The code from the device label. EZVIZ will normally hand this account
         # the same key over the API, but not for every device and not for every
         # account, and without it an encrypted picture or stream is noise.
-        self._verification_codes = _verification_codes(
-            options.get(CONF_VERIFICATION_CODES)
-        )
+        self._verification_codes = verification_codes(entry)
 
     # ------------------------------------------------------------------
     # Session
@@ -869,12 +870,39 @@ def _int(value: Any) -> int:
         return -1
 
 
-def _verification_codes(value: Any) -> dict[str, str]:
-    """Return the SERIAL=CODE pairs configured for encrypted devices.
+def verification_codes(entry: ConfigEntry) -> dict[str, str]:
+    """Return the verification code configured for each camera.
 
-    One line of text, because an options flow has no way to ask for a value per
-    device - and most accounts have one doorbell anyway.
+    They live in a subentry per camera, which is what puts one under the camera
+    it belongs to. The old single text field is still read first, so that an
+    upgrade does not quietly drop a code somebody had already set.
     """
+    codes = _codes_from_text(entry.options.get(CONF_VERIFICATION_CODES))
+    for subentry in entry.subentries.values():
+        if subentry.subentry_type != CAMERA_SUBENTRY:
+            continue
+        serial = subentry.data.get(CONF_SERIAL)
+        code = subentry.data.get(CONF_VERIFICATION_CODE)
+        if serial and code:
+            codes[str(serial)] = str(code)
+    return codes
+
+
+def config_signature(entry: ConfigEntry) -> tuple[Any, ...]:
+    """Return what a reload depends on.
+
+    An entry is updated for reasons that are none of our business - a refreshed
+    session, most often - and reloading on those would be an endless loop. Only
+    the options and the per camera codes should bring the integration back up.
+    """
+    return (
+        tuple(sorted((key, repr(value)) for key, value in entry.options.items())),
+        tuple(sorted(verification_codes(entry).items())),
+    )
+
+
+def _codes_from_text(value: Any) -> dict[str, str]:
+    """Return SERIAL=CODE pairs from the old single text option."""
     codes: dict[str, str] = {}
     separators = str(value or "").replace(";", ",").replace(chr(10), ",")
     for pair in separators.split(","):

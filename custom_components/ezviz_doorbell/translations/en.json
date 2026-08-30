@@ -56,17 +56,46 @@
           "snapshot_interval": "Seconds between still pictures",
           "ring_codes": "Extra alert codes that mean a ring",
           "motion_codes": "Extra alert codes that mean motion",
-          "devices": "Cameras to include",
-          "verification_codes": "Verification codes"
+          "devices": "Cameras to include"
         },
         "data_description": {
           "poll_interval": "A doorbell press only ever arrives by polling, so this is its worst case delay. Any push drops the poll to one a second for half a minute, which is where a press usually lands. 0 switches polling off.",
           "snapshot_interval": "Each picture is a round trip to the cloud and wakes the camera, so short intervals cost battery.",
           "ring_codes": "Comma separated. Only needed for a model whose codes are not recognised - the log names the code next to every unrecognised event.",
           "motion_codes": "Comma separated.",
-          "devices": "Untick anything that is not a doorbell to keep its entities out of Home Assistant.",
-          "verification_codes": "Only needed for a device with encryption switched on: SERIAL=CODE, comma separated, where CODE is the letters printed on the device label. EZVIZ hands most accounts the key over the API, and this is what to do when it does not."
+          "devices": "Untick anything that is not a doorbell to keep its entities out of Home Assistant."
         }
+      }
+    }
+  },
+  "config_subentries": {
+    "camera": {
+      "entry_type": "Camera verification code",
+      "initiate_flow": {
+        "user": "Add a camera's verification code",
+        "reconfigure": "Change this camera's verification code"
+      },
+      "step": {
+        "user": {
+          "title": "Verification code",
+          "description": "EZVIZ hands most accounts the key to an encrypted camera over its API, and this integration asks for it. Where it will not, the code printed on the device's own label is the other way in - it decrypts the snapshots and the video.",
+          "data": {
+            "serial": "Camera",
+            "verification_code": "Verification code"
+          },
+          "data_description": {
+            "verification_code": "The letters on the label, usually six of them."
+          }
+        },
+        "reconfigure": {
+          "title": "Verification code",
+          "data": {
+            "verification_code": "Verification code"
+          }
+        }
+      },
+      "abort": {
+        "no_cameras": "Every camera on this account already has a code. Change one from its own entry instead."
       }
     }
   },

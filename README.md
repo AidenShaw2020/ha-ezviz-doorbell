@@ -115,10 +115,8 @@ because the session is stored and refreshed from then on. Needs Home Assistant
   for a model whose codes are not recognised yet.
 - **Cameras to include** — an account often holds cameras that have nothing to
   do with a doorbell; untick them and no entities are built for them.
-- **Verification codes** — `SERIAL=CODE`, comma separated, where the code is the
-  letters printed on the device label. Only needed for a device with encryption
-  switched on, and only when EZVIZ will not hand this account the key over its
-  API. See below.
+Verification codes are not here — they belong to one camera each, so they are
+added under the account as **Add a camera's verification code**. See below.
 
 ### It runs alongside the built-in EZVIZ integration
 
@@ -231,11 +229,14 @@ either way.
 **The other way: give the integration the key.** EZVIZ hands most accounts the
 device key over its API, and this integration asks for it — but not every
 account gets it (a shared device, or one EZVIZ answers with
-`好友不存在` / `重复申请分享`, both of which mean "no"). Put `SERIAL=CODE` into
-**Verification codes** in the options, with the letters from the device's label,
-and it stops asking. An encrypted stream still has to be collected in full
-before it can be decrypted, so it arrives as a 15 second clip rather than a
-continuous feed — usable, but the first way is better.
+`好友不存在` / `重复申请分享`, both of which mean "no"). The key is then the code
+printed on the device's own label, and it goes under the camera it belongs to:
+**Settings → Devices & services → EZVIZ Doorbell → Add a camera's verification
+code**, pick the camera, type the letters. It takes effect immediately, and it
+decrypts that camera's snapshots as well as its video. An encrypted stream
+still has to be collected in full before it can be decrypted, so it arrives as
+a 15 second clip rather than a continuous feed — usable, but the first way is
+better.
 
 With encryption on and no code configured, no stream is offered at all: the
 camera shows stills instead. A play button that can only fail makes Home

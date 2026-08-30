@@ -8,10 +8,15 @@ to the entity an automation would trigger on.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 from homeassistant.components.camera import CameraEntityFeature
-from homeassistant.config_entries import ConfigEntryState
+from homeassistant.config_entries import (
+    SOURCE_USER,
+    ConfigEntryState,
+    ConfigSubentryData,
+)
 from homeassistant.const import (
     CONF_PASSWORD,
     CONF_USERNAME,
@@ -20,11 +25,15 @@ from homeassistant.const import (
     STATE_UNAVAILABLE,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.ezviz_doorbell.const import (
+    CAMERA_SUBENTRY,
     CONF_DEVICES,
+    CONF_SERIAL,
+    CONF_VERIFICATION_CODE,
     CONF_REGION,
     CONF_STATUS_INTERVAL,
     CONF_VERIFICATION_CODES,
@@ -352,8 +361,30 @@ async def test_it_loads_against_the_older_library(
         )
 
 
+@contextmanager
+def _mocked_cloud(ezviz_client: MagicMock):
+    """Stand in for EZVIZ for as long as the block runs.
+
+    A reload - which adding a verification code causes - logs in again, so the
+    cloud has to stay mocked out for longer than the first setup.
+    """
+    camera = MagicMock()
+    camera.return_value.status.return_value = RAW_STATUS
+    with (
+        patch(
+            "custom_components.ezviz_doorbell.coordinator.EzvizClient",
+            return_value=ezviz_client,
+        ),
+        patch("custom_components.ezviz_doorbell.coordinator.EzvizCamera", camera),
+    ):
+        yield
+
+
 async def _setup_with(
-    hass: HomeAssistant, ezviz_client: MagicMock, options: dict
+    hass: HomeAssistant,
+    ezviz_client: MagicMock,
+    options: dict,
+    subentries: list | None = None,
 ) -> MockConfigEntry:
     """Set the integration up with particular options."""
     entry = MockConfigEntry(
@@ -365,18 +396,11 @@ async def _setup_with(
             CONF_REGION: DEFAULT_REGION,
         },
         options=options,
+        subentries_data=subentries or [],
     )
     entry.add_to_hass(hass)
 
-    camera = MagicMock()
-    camera.return_value.status.return_value = RAW_STATUS
-    with (
-        patch(
-            "custom_components.ezviz_doorbell.coordinator.EzvizClient",
-            return_value=ezviz_client,
-        ),
-        patch("custom_components.ezviz_doorbell.coordinator.EzvizCamera", camera),
-    ):
+    with _mocked_cloud(ezviz_client):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
     return entry
@@ -400,7 +424,11 @@ async def test_an_encrypted_camera_offers_no_stream_without_a_key(
 async def test_a_verification_code_brings_the_stream_back(
     hass: HomeAssistant, ezviz_client: MagicMock
 ) -> None:
-    """With the code from the device label there is something to decode with."""
+    """With the code from the device label there is something to decode with.
+
+    Through the old single text option, which is kept working so that an
+    upgrade does not drop a code somebody had already set.
+    """
     await _setup_with(
         hass, ezviz_client, {CONF_VERIFICATION_CODES: f"{SERIAL}=ABCDEF"}
     )
@@ -437,3 +465,55 @@ async def test_only_the_chosen_cameras_are_built(
     await _setup_with(hass, ezviz_client, {CONF_DEVICES: ["SOMETHINGELSE"]})
 
     assert hass.states.get("camera.front_door") is None
+
+
+async def test_a_code_kept_under_its_camera_unlocks_the_stream(
+    hass: HomeAssistant, ezviz_client: MagicMock
+) -> None:
+    """A code belongs to one camera, so it is stored against one camera."""
+    await _setup_with(
+        hass,
+        ezviz_client,
+        {},
+        subentries=[
+            ConfigSubentryData(
+                data={CONF_SERIAL: SERIAL, CONF_VERIFICATION_CODE: "ABCDEF"},
+                subentry_type=CAMERA_SUBENTRY,
+                title="Front door",
+                unique_id=SERIAL,
+            )
+        ],
+    )
+
+    assert (
+        hass.states.get("camera.front_door").attributes["supported_features"]
+        == CameraEntityFeature.STREAM
+    )
+
+
+async def test_adding_a_code_takes_effect_without_a_restart(
+    hass: HomeAssistant, ezviz_client: MagicMock
+) -> None:
+    """Adding one should reload the account, and nothing else should."""
+    entry = await _setup_with(hass, ezviz_client, {})
+    assert entry.runtime_data.verification_code(SERIAL) is None
+
+    with _mocked_cloud(ezviz_client):
+        result = await hass.config_entries.subentries.async_init(
+            (entry.entry_id, CAMERA_SUBENTRY), context={"source": SOURCE_USER}
+        )
+        assert result["type"] is FlowResultType.FORM
+
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"],
+            {CONF_SERIAL: SERIAL, CONF_VERIFICATION_CODE: " ABCDEF "},
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    subentry = next(iter(entry.subentries.values()))
+    assert subentry.data == {CONF_SERIAL: SERIAL, CONF_VERIFICATION_CODE: "ABCDEF"}
+    assert subentry.title == "Front door"
+
+    # The reload happened, so the camera can be decrypted from now on.
+    assert entry.runtime_data.verification_code(SERIAL) == "ABCDEF"
