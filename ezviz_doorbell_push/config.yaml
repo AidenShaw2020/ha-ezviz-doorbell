@@ -1,7 +1,7 @@
 name: EZVIZ Doorbell Push
-version: "0.1.9"
+version: "0.2.0"
 slug: ezviz_doorbell_push
-description: Real-time EZVIZ doorbell and motion events via MQTT discovery
+description: Real-time EZVIZ doorbell and motion events, device controls and live view via MQTT discovery
 url: https://github.com/AidenShaw2020/ha-ezviz-doorbell
 arch:
   - aarch64
@@ -12,6 +12,10 @@ startup: application
 boot: auto
 services:
   - mqtt:need
+ports:
+  8099/tcp: 8099
+ports_description:
+  8099/tcp: Live view - snapshots, MJPEG and MPEG-TS for cameras without RTSP
 options:
   ezviz_username: ""
   ezviz_password: ""
@@ -19,6 +23,11 @@ options:
   serials: []
   verification_codes: []
   poll_interval: 5
+  status_interval: 60
+  live_stream: true
+  snapshot_interval: 3
+  ring_codes: []
+  motion_codes: []
   log_level: info
 schema:
   ezviz_username: str
@@ -30,6 +39,15 @@ schema:
     - serial: str
       code: password
   poll_interval: int(0,3600)
+  status_interval: int(0,86400)
+  live_stream: bool
+  live_stream_token: str?
+  live_stream_url_base: str?
+  snapshot_interval: int(1,60)
+  ring_codes:
+    - int
+  motion_codes:
+    - int
   log_level: list(debug|info|warning|error)
   mfa_code: str?
   mqtt_host: str?

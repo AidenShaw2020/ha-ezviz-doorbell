@@ -1,8 +1,11 @@
 # EZVIZ Doorbell Push
 
-A Home Assistant **add-on** that gives EZVIZ doorbells the two things the
-built-in integration cannot: a real-time **doorbell press event**, and a
-**decrypted snapshot** you can keep encryption switched on for.
+A Home Assistant **add-on** that gives EZVIZ doorbells the things the built-in
+integration cannot: a real-time **doorbell press event** told apart from motion,
+a **decrypted snapshot** you can keep encryption switched on for, a **live view**
+for a camera with no RTSP server, a **wake button** for a hibernating battery
+device, and the **full set of device entities** — battery, switches, work mode,
+firmware and the rest.
 
 It runs beside the built-in `ezviz` integration and changes nothing about it.
 Nothing is replaced, nothing is overridden — remove the add-on and you are back
@@ -36,19 +39,39 @@ encrypted bytes labelled `image/jpeg`.
 This add-on downloads the snapshot itself and decrypts it with the verification
 code you give it, so **image encryption can stay on** in the EZVIZ app.
 
+### The same failed RTSP check costs you everything else
+
+That camera config entry is also what carries the switches, the sensors and the
+live view. A battery doorbell that never passes the RTSP check therefore ends up
+with almost no entities at all. This add-on builds them from the cloud API
+instead, which is the same place the EZVIZ app reads them from, so no RTSP
+server has to exist.
+
 ---
 
 ## What you get
 
-Entities are created automatically through MQTT discovery — no YAML:
+Entities are created automatically through MQTT discovery — no YAML. Everything
+below appears under one device per camera.
 
-| Entity | Notes |
+| Platform | Entities |
 | --- | --- |
-| `event.<device>_alerts` | device class `doorbell`, event types `ring` / `motion` / `alarm` |
-| `image.<device>_last_snapshot` | decrypted JPEG from the latest alarm |
+| `event` | **Doorbell** (ring only), **Motion** (motion only), **Alerts** (every event, with the raw code) |
+| `binary_sensor` | Doorbell button, Motion detected, Online, Video encryption, Alarm schedule |
+| `sensor` | Battery, Last event, Last ring, Last motion, Last alarm type, Last alarm time, Seconds since last trigger, Wi-Fi signal, Wi-Fi network, Local IP, WAN IP, Firmware, PIR status, Storage capacity, Live stream URL, Snapshot URL |
+| `switch` | Motion detection, Alarm notifications, Doorbell notifications, plus every hardware switch the device reports (status light, audio, sleep, infrared, human detection, tamper alarm, …) |
+| `number` | Detection sensitivity |
+| `select` | Work mode, Night vision, Image style, Alarm sound, Detection type |
+| `button` | **Wake camera**, Take snapshot, Refresh status, Reboot |
+| `siren` | Siren — sounds the camera's own alarm |
+| `image` | Last snapshot, decrypted |
+| `update` | Firmware, with an Install button |
 
-The event entity carries `alert_type_code`, `alert`, `time` and `msg_id` as
-attributes.
+The hardware switches are announced from what the device itself reports, so you
+get the ones your model has and no placeholders for the ones it does not.
+
+Event entities carry `alert_type_code`, `alert`, `time`, `msg_id` and `source`
+as attributes.
 
 ## Install
 
@@ -73,8 +96,47 @@ verification_codes:
     code: ABCDEF      # from the device label, needed to decrypt snapshots
 mfa_code: ""          # only for the first login, see below
 poll_interval: 5      # seconds; 0 disables the polling fallback
+status_interval: 60   # seconds between device status refreshes; 0 disables them
+live_stream: true     # serve live video over HTTP, see below
+snapshot_interval: 3  # seconds between frames of the MJPEG fallback
+ring_codes: []        # extra alert codes to treat as a ring
+motion_codes: []      # extra alert codes to treat as motion
 log_level: info
 ```
+
+`live_stream_token` and `live_stream_url_base` override the live view's
+generated token and its published base URL. `mqtt_host` / `mqtt_port` /
+`mqtt_username` / `mqtt_password` are optional and only needed for a broker the
+Supervisor does not manage.
+
+## A ring is not an alarm, and neither is motion
+
+Both used to arrive as the generic `alarm` event type, which made the two
+indistinguishable in an automation. They are now separated three ways.
+
+**Separate entities.** `event.<device>_doorbell` fires only for a press,
+`event.<device>_motion` only for motion, and the momentary
+`binary_sensor.<device>_doorbell_button` and
+`binary_sensor.<device>_motion_detected` mirror them for cards and blueprints
+that expect a binary sensor. `event.<device>_alerts` still carries everything,
+raw code included, so nothing is lost.
+
+**Wider classification.** Each message is now decided in this order, and the
+reason is written to the log next to the event:
+
+1. a message that carries a call status is a ring — EZVIZ models a doorbell
+   press as an incoming call, not an alarm
+2. the alert code, looked up in the table for the path it arrived on
+3. the codes you added under `ring_codes` / `motion_codes`
+4. the alert code looked up in the *other* path's table
+5. the wording of the title EZVIZ sends with the message, matched whole-word
+   against a list that covers English, Czech, German, French and Spanish
+6. anything still unrecognised stays `alarm`, with its raw code in the log and
+   in the event attributes
+
+So a model whose codes nobody has catalogued yet is still classified correctly
+from its own message text, and a code you identify from the log can be mapped
+permanently by adding it to `ring_codes` or `motion_codes` — no rebuild.
 
 ### Why polling is the path that works for the ring
 
@@ -124,8 +186,64 @@ worst case — `0` switches polling off entirely.
 The first sweep after a start only records what already exists, so old messages
 are not replayed as fresh events.
 
-`mqtt_host` / `mqtt_port` / `mqtt_username` / `mqtt_password` are optional and
-only needed for a broker the Supervisor does not manage.
+## Live view without RTSP
+
+A battery doorbell has no RTSP server, so there is nothing for a camera entity
+to point at. What the EZVIZ app plays instead is the cloud stream, and the
+add-on can open the same stream, remux it with FFmpeg and serve it on an
+ordinary URL. It listens on port **8099** and offers four URLs per camera:
+
+| URL | What it is |
+| --- | --- |
+| `/<serial>/live.ts` | the cloud live stream as MPEG-TS — the real thing |
+| `/<serial>/snapshot.jpg` | one freshly captured picture, taken on demand |
+| `/<serial>/mjpeg` | those captures as an MJPEG stream, one every `snapshot_interval` seconds |
+| `/<serial>/last.jpg` | the most recent alarm snapshot, already decrypted |
+
+The full URLs, token included, are published as the **Live stream URL** and
+**Snapshot URL** sensors, and listed on the add-on's own index page at
+`http://<your-home-assistant>:8099/?token=…`.
+
+To get a camera entity out of it, add a **Generic Camera** integration and paste
+the two sensor values in:
+
+- *Still image URL* → the **Snapshot URL** sensor
+- *Stream source URL* → the **Live stream URL** sensor
+- leave *RTSP transport* alone, and untick authentication — the token in the URL
+  is the authentication
+
+Notes worth knowing before you judge the result:
+
+- **Video encryption limits it to a clip.** An encrypted cloud stream has to be
+  collected in full before it can be decrypted, so with encryption on the add-on
+  serves a 15 second clip rather than a continuous stream. Switch video
+  encryption off in the EZVIZ app for a real live view. Image encryption is
+  separate and can stay on — snapshots are decrypted either way.
+- **Every URL carries a token.** It is generated once, kept in the add-on's
+  storage, and included in the published URLs. Set `live_stream_token` to pin
+  your own.
+- **The published URL uses the add-on's container hostname**, which is what
+  Home Assistant itself resolves. To reach it from a browser on your network,
+  use your Home Assistant host's address and the port shown in the add-on's
+  Network panel, or set `live_stream_url_base` to the address you want
+  published.
+- **A cloud stream is a cloud stream.** It costs bandwidth on both ends and it
+  is slower to start than RTSP would be. Set `live_stream: false` to switch the
+  server off entirely.
+
+## Waking a sleeping camera
+
+A battery doorbell hibernates between events, and while it sleeps it answers
+nothing — no live view, no fresh snapshot. The **Wake camera** button does what
+the app does when you open the live view, as three separate requests: it turns
+the sleep switch off, asks the cloud to keep the device awake, and takes a
+picture, which is what actually pulls the device onto the network. Each step is
+allowed to fail on its own — which of them a model honours depends on its
+firmware — and the log says which ones were accepted.
+
+The live stream and the snapshot URL ask the cloud to delay sleep before they
+open, so opening the camera in Home Assistant usually wakes it without pressing
+anything.
 
 ## Two factor authentication
 
@@ -150,22 +268,23 @@ invalidate the stored session and ask for a new code.
 | Code | Path | Event type |
 | --- | --- | --- |
 | `subType 2701` | poll | `ring` — doorbell button |
+| any message with a `callingStatus` | poll | `ring` |
 | `alert_type_code 10120` | push | `motion` — AI human detection |
 | `alert_type_code 10000` | push | `motion` — PIR |
 | `alert_type_code 0` | push | `ring` |
-| anything else | either | `alarm`, raw code kept in the attributes |
+| anything else | either | matched on the message text, else `alarm` with the raw code kept in the attributes |
 
-Motion arrives over push within a second or two; a ring only ever arrives by
-polling, usually about a second after the press thanks to the burst described
-above. Both paths are live at once, so events carry `"source": "push"` or
+Motion arrives over push within a second or two; a ring usually only arrives by
+polling, about a second after the press thanks to the burst described above.
+Both paths are live at once, so events carry `"source": "push"` or
 `"source": "poll"`, and a detection seen on both is emitted once — the second
 copy is suppressed and logged as a skipped duplicate.
 
 `2701` and `10120` were captured from a live EP8x; `0` and `10000` come from
 [RenierM26/ha-ezviz#112](https://github.com/RenierM26/ha-ezviz/issues/112) on a
-DP1C. Anything unmapped is logged with its raw code and carries it in the event
-attributes — add it to `PUSH_ALERT_TYPES` (push) or `POLL_SUBTYPES` (polled) in
-`ezviz_push.py`.
+DP1C. Anything unmapped is logged with its raw code — add it to `ring_codes` or
+`motion_codes` in the options, or to `PUSH_ALERT_TYPES` / `POLL_SUBTYPES` in
+`const.py` if you would rather it shipped with the add-on.
 
 ## Automation example
 
@@ -174,14 +293,17 @@ automation:
   - alias: "Doorbell pressed"
     triggers:
       - trigger: state
-        entity_id: event.doorbell_alerts
-        attribute: event_type
-        to: ring
+        entity_id: event.front_door_doorbell
     actions:
       - action: notify.mobile_app_phone
         data:
           message: "Someone is at the door"
+          data:
+            image: /api/camera_proxy/image.front_door_last_snapshot
 ```
+
+The doorbell event entity only ever fires for a press, so no condition on the
+event type is needed. Use `event.front_door_motion` for motion.
 
 ---
 
@@ -195,6 +317,11 @@ Motion is confirmed too, arriving over push almost instantly as AI human
 detection. Anything unmapped is still reported as `alarm` with its raw code in
 the log and in the event attributes, which is what you need to extend the maps.
 
+The device entities, the live view and the wake button are built on the same
+cloud API the EZVIZ app uses, through `pyezvizapi`. Which of them a given model
+answers varies by firmware: everything is announced from what the device itself
+reports, and a request a device refuses is logged rather than retried.
+
 ## tools/
 
 Standalone scripts, useful before or instead of installing the add-on. Both
@@ -204,6 +331,8 @@ prompt for credentials interactively and store nothing.
   latest alarm, then downloads the snapshot and reports whether it is encrypted.
 - `ezviz_push_bridge.py` — the same push listener as a plain script, forwarding
   to a Home Assistant webhook. Handy for discovering your alert codes.
+- `make_icons.py` — resizes `assets/` into the add-on's `icon.png` and
+  `logo.png`.
 
 ## Notes
 

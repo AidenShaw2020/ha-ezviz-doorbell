@@ -11,11 +11,15 @@ COPY requirements.txt /tmp/requirements.txt
 # pycryptodome (pulled in by pyezvizapi to decrypt snapshots) ships musllinux
 # wheels for the common architectures but not all of them, so keep a toolchain
 # around for the duration of the install in case it has to compile.
-RUN apk add --no-cache --virtual .build-deps gcc musl-dev python3-dev \
+#
+# ffmpeg is for the live view: the cloud stream arrives as MPEG-PS and has to
+# be remuxed to MPEG-TS before Home Assistant's stream component will take it.
+RUN apk add --no-cache ffmpeg \
+ && apk add --no-cache --virtual .build-deps gcc musl-dev python3-dev \
  && pip install --no-cache-dir -r /tmp/requirements.txt \
  && apk del .build-deps
 
-COPY ezviz_push.py /app/ezviz_push.py
+COPY *.py /app/
 WORKDIR /app
 
 CMD ["python", "/app/ezviz_push.py"]

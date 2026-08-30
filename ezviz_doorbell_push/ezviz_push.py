@@ -10,6 +10,11 @@ onto the local MQTT broker using MQTT discovery, so Home Assistant creates the
 entities on its own. It runs beside the built-in integration and changes
 nothing about it.
 
+Alongside the events it mirrors the device itself - battery, switches, work
+mode, firmware and the rest - as the entities the built-in integration would
+create, and it serves live video over HTTP for doorbells that have no RTSP
+server of their own.
+
 Alarm snapshots are AES encrypted by EZVIZ (the files start with the magic
 bytes ``hikencodepicture``). Given the device verification code, this add-on
 decrypts them and publishes the plain JPEG, which means image encryption can
@@ -19,11 +24,14 @@ stay switched on in the EZVIZ app.
 from __future__ import annotations
 
 import base64
+from datetime import datetime, timezone
 import json
 import logging
 import os
 from pathlib import Path
+import queue
 import signal
+import socket
 import sys
 import threading
 import time
@@ -34,42 +42,38 @@ import paho.mqtt.client as mqtt
 from pyezvizapi import client as ezviz_client_module
 from pyezvizapi import constants as ezviz_constants
 from pyezvizapi import mqtt as ezviz_mqtt_module
+from pyezvizapi.camera import EzvizCamera
 from pyezvizapi.client import EzvizClient
 from pyezvizapi.exceptions import EzvizAuthVerificationCode, PyEzvizError
 from pyezvizapi.utils import decrypt_image
 import requests
 
+import commands
+from const import (
+    AVAILABILITY_TOPIC,
+    COMMAND_SUBSCRIPTION,
+    EVENT_ALARM,
+    EVENT_MOTION,
+    EVENT_RING,
+    MOTION_PATTERN,
+    POLL_SUBTYPES,
+    PUSH_ALERT_TYPES,
+    RING_PATTERN,
+    event_topic,
+    image_topic,
+    status_topic,
+    trigger_topic,
+    update_topic,
+)
+from devicestate import build_status, firmware_payload
+import entities
+import liveview
+
 OPTIONS_PATH = Path("/data/options.json")
 TOKEN_PATH = Path("/data/token.json")
 FEATURE_CODE_PATH = Path("/data/feature_code")
+LIVE_TOKEN_PATH = Path("/data/live_token")
 SUPERVISOR_URL = "http://supervisor"
-DISCOVERY_PREFIX = "homeassistant"
-BASE_TOPIC = "ezviz_push"
-AVAILABILITY_TOPIC = f"{BASE_TOPIC}/status"
-
-EVENT_RING = "ring"
-EVENT_MOTION = "motion"
-EVENT_ALARM = "alarm"
-EVENT_TYPES = [EVENT_RING, EVENT_MOTION, EVENT_ALARM]
-
-# Push and polled messages use two different code spaces, so they get two
-# different maps. Anything unmapped is reported as a generic alarm with the raw
-# code attached, so a new code can be identified from the event attributes.
-
-# Push messages carry "alert_type_code": 0 is the doorbell button, 10000 the PIR.
-PUSH_ALERT_TYPES: dict[int, str] = {
-    0: EVENT_RING,
-    10000: EVENT_MOTION,
-    # "AI Human Detection" - what an EP8x actually reports for motion. The
-    # descriptive title stays in the "alert" attribute.
-    10120: EVENT_MOTION,
-}
-
-# Polled messages carry "subType". A ring is 2701 - a *call*, not an alarm,
-# which is why it never appears on the alarm push channel.
-POLL_SUBTYPES: dict[int, str] = {
-    2701: EVENT_RING,
-}
 
 # After any push, poll hard for a short while. Someone reaching the button has
 # almost always tripped motion first, and that push arrives instantly - so it
@@ -160,6 +164,22 @@ def discover_mqtt(options: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _now() -> str:
+    """Return the current time as an ISO 8601 timestamp entities accept."""
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _codes(values: Any) -> set[int]:
+    """Return a set of integer alert codes from an option list."""
+    codes: set[int] = set()
+    for value in values or []:
+        try:
+            codes.add(int(value))
+        except (TypeError, ValueError):
+            _LOGGER.warning("Ignoring non-numeric alert code %r in the options", value)
+    return codes
+
+
 class EzvizPushBridge:
     """Bridge EZVIZ cloud push messages onto the local MQTT broker."""
 
@@ -168,23 +188,91 @@ class EzvizPushBridge:
         self._options = options
         self._region = options.get("ezviz_region") or "apiieu.ezvizlife.com"
         self._serial_filter = {s for s in options.get("serials") or [] if s}
-        self._codes = {
+        self._verification_codes = {
             item["serial"]: item["code"]
             for item in options.get("verification_codes") or []
             if item.get("serial") and item.get("code")
         }
         self._names: dict[str, str] = {}
         self._announced: set[str] = set()
+        self._announced_full: set[str] = set()
+        self._announced_signature: dict[str, tuple[str, tuple[str, ...]]] = {}
         self._mqtt: mqtt.Client | None = None
+        self._client: EzvizClient | None = None
         self._stop = threading.Event()
         self._seen_messages: set[str] = set()
         self._poll_primed = False
         self._recent: dict[str, float] = {}
         self._poll_now = threading.Event()
+        self._status_now = threading.Event()
         self._burst_until = 0.0
         # Wide enough to cover a poll arriving after a push for the same event,
         # but no wider, so two genuine presses are not merged into one.
         self._dedupe_window = max(15, int(options.get("poll_interval") or 0) + 10)
+
+        # Extra codes the user has identified for their own model, on top of
+        # the ones this add-on already knows.
+        self._extra_ring = _codes(options.get("ring_codes"))
+        self._extra_motion = _codes(options.get("motion_codes"))
+
+        # Everything the status entities read, kept per device so a command or
+        # an event can republish without refetching the whole device.
+        self._status: dict[str, dict[str, Any]] = {}
+        self._event_state: dict[str, dict[str, Any]] = {}
+        self._snapshots: dict[str, bytes] = {}
+        self._sensitivity_broken: set[str] = set()
+
+        # EZVIZ calls are made from the poll thread, the command worker and the
+        # live view server, so they take turns.
+        self._api_lock = threading.RLock()
+        self._commands: queue.Queue[tuple[str, str, str]] = queue.Queue()
+
+        self._liveview: liveview.LiveViewServer | None = None
+
+    # ------------------------------------------------------------------
+    # Accessors used by commands and the live view server
+    # ------------------------------------------------------------------
+
+    @property
+    def client(self) -> EzvizClient:
+        """Return the logged in EZVIZ client.
+
+        Raises:
+            PyEzvizError: If the bridge is not connected to EZVIZ yet.
+        """
+        if self._client is None:
+            raise PyEzvizError("Not connected to EZVIZ yet")
+        return self._client
+
+    def serials(self) -> list[str]:
+        """Return every serial this add-on handles."""
+        if self._serial_filter:
+            return sorted(self._serial_filter)
+        return sorted(self._status or self._names)
+
+    def device_name(self, serial: str) -> str:
+        """Return the device's name, falling back to its serial."""
+        return self._names.get(serial, serial)
+
+    def device_status(self, serial: str) -> dict[str, Any]:
+        """Return the last published status for a device."""
+        return self._status.get(serial, {})
+
+    def last_snapshot(self, serial: str) -> bytes | None:
+        """Return the last snapshot published for a device."""
+        return self._snapshots.get(serial)
+
+    def request_status_refresh(self) -> None:
+        """Ask the status poller to fetch again straight away."""
+        self._status_now.set()
+
+    def keep_awake(self, serial: str) -> None:
+        """Ask the cloud to keep a battery camera awake a while longer."""
+        try:
+            with self._api_lock:
+                self.client.delay_battery_device_sleep(serial, 1, 1)
+        except (PyEzvizError, OSError, KeyError) as err:
+            _LOGGER.debug("Could not delay sleep for %s: %s", serial, err)
 
     # ------------------------------------------------------------------
     # Local MQTT
@@ -195,8 +283,7 @@ class EzvizPushBridge:
         settings = discover_mqtt(self._options)
 
         # paho-mqtt 2.x demands an explicit callback API version, 1.x does not
-        # accept the argument at all. No callbacks are registered here, so
-        # either generation behaves identically.
+        # accept the argument at all.
         callback_api_version = getattr(mqtt, "CallbackAPIVersion", None)
         if callback_api_version is not None:
             client = mqtt.Client(
@@ -208,9 +295,11 @@ class EzvizPushBridge:
         if settings["username"]:
             client.username_pw_set(settings["username"], settings["password"])
         client.will_set(AVAILABILITY_TOPIC, "offline", retain=True)
+        client.on_message = self._on_mqtt_message
         client.connect(settings["host"], settings["port"], keepalive=60)
         client.loop_start()
         client.publish(AVAILABILITY_TOPIC, "online", retain=True)
+        client.subscribe(COMMAND_SUBSCRIPTION, qos=1)
         self._mqtt = client
         _LOGGER.info("Connected to MQTT broker at %s:%s",
                      settings["host"], settings["port"])
@@ -221,61 +310,143 @@ class EzvizPushBridge:
             return
         self._mqtt.publish(topic, payload, retain=retain)
 
-    def _device_block(self, serial: str) -> dict[str, Any]:
-        """Return the MQTT discovery device block for one camera."""
-        return {
-            "identifiers": [f"ezviz_push_{serial}"],
-            "name": self._names.get(serial, serial),
-            "manufacturer": "EZVIZ",
-            "model": "EZVIZ camera (push)",
-        }
+    def _on_mqtt_message(self, client: Any, userdata: Any, message: Any) -> None:
+        """Queue a command sent by Home Assistant (paho network thread)."""
+        parts = message.topic.split("/")
+        if len(parts) != 4:
+            return
+        _, serial, _, key = parts
+        payload = message.payload.decode("utf-8", "replace").strip()
+        _LOGGER.info("Command for %s: %s = %s", serial, key, payload)
+        self._commands.put((serial, key, payload))
+
+    def _command_worker(self) -> None:
+        """Run queued commands one at a time, off the MQTT network thread."""
+        while not self._stop.is_set():
+            try:
+                serial, key, payload = self._commands.get(timeout=1)
+            except queue.Empty:
+                continue
+
+            try:
+                with self._api_lock:
+                    commands.dispatch(self, serial, key, payload)
+            except (PyEzvizError, OSError, ValueError, KeyError) as err:
+                _LOGGER.error("Command %s for %s failed: %s", key, serial, err)
+            else:
+                _LOGGER.info("Command %s for %s accepted", key, serial)
+                # The cloud needs a moment before it reports the new value.
+                self._stop.wait(2)
+                self.request_status_refresh()
+
+    # ------------------------------------------------------------------
+    # Discovery
+    # ------------------------------------------------------------------
 
     def announce(self, serial: str) -> None:
-        """Publish MQTT discovery config for a device, once."""
+        """Publish discovery for the entities that need no device status.
+
+        Events must exist from the first second, well before the first status
+        poll has returned, or the very first ring has nowhere to land.
+        """
         if serial in self._announced:
             return
 
-        device = self._device_block(serial)
-
-        self._publish(
-            f"{DISCOVERY_PREFIX}/event/ezviz_push_{serial}/alerts/config",
-            json.dumps(
-                {
-                    "name": "Alerts",
-                    "unique_id": f"ezviz_push_{serial}_alerts",
-                    "state_topic": f"{BASE_TOPIC}/{serial}/event",
-                    "availability_topic": AVAILABILITY_TOPIC,
-                    "device_class": "doorbell",
-                    "event_types": EVENT_TYPES,
-                    "device": device,
-                }
-            ),
-            retain=True,
-        )
-
-        self._publish(
-            f"{DISCOVERY_PREFIX}/image/ezviz_push_{serial}/snapshot/config",
-            json.dumps(
-                {
-                    "name": "Last snapshot",
-                    "unique_id": f"ezviz_push_{serial}_snapshot",
-                    "image_topic": f"{BASE_TOPIC}/{serial}/image",
-                    "image_encoding": "b64",
-                    "content_type": "image/jpeg",
-                    "availability_topic": AVAILABILITY_TOPIC,
-                    "device": device,
-                }
-            ),
-            retain=True,
-        )
+        device = entities.device_block(serial, self._status.get(serial))
+        for entity in (*entities.EVENT_ENTITIES, *entities.TRIGGER_ENTITIES):
+            topic, payload = entities.discovery_message(serial, entity, device)
+            self._publish(topic, payload, retain=True)
 
         self._announced.add(serial)
         _LOGGER.info("Announced %s (%s) to Home Assistant",
-                     self._names.get(serial, serial), serial)
+                     self.device_name(serial), serial)
+
+    def announce_full(self, serial: str) -> None:
+        """Publish discovery for every entity, once the status is known.
+
+        The status is refreshed on a timer, but discovery is not: republishing
+        forty retained messages a minute would be pure churn. It goes out again
+        only when there is something new to say - a renamed device, a firmware
+        upgrade, or a switch the device did not report before.
+        """
+        status = self._status.get(serial) or {}
+        device = entities.device_block(serial, status)
+        all_entities = entities.all_entities(status)
+
+        signature = (
+            json.dumps(device, sort_keys=True),
+            tuple(entity.key for entity in all_entities),
+        )
+        if self._announced_signature.get(serial) == signature:
+            return
+
+        for entity in all_entities:
+            topic, payload = entities.discovery_message(serial, entity, device)
+            self._publish(topic, payload, retain=True)
+
+        if serial not in self._announced_full:
+            switches = len(entities.switch_entities(status.get("switches") or {}))
+            _LOGGER.info(
+                "Announced the full entity set for %s (%s), including %d device"
+                " switch(es)",
+                self.device_name(serial),
+                serial,
+                switches,
+            )
+        else:
+            _LOGGER.info("Re-announced %s: its entities or its name changed", serial)
+
+        self._announced.add(serial)
+        self._announced_full.add(serial)
+        self._announced_signature[serial] = signature
 
     # ------------------------------------------------------------------
     # Snapshots
     # ------------------------------------------------------------------
+
+    def _decrypt_image(self, serial: str, data: bytes) -> bytes | None:
+        """Return a plain JPEG, decrypting an EZVIZ encrypted one if needed."""
+        if data[:16] != b"hikencodepicture":
+            return data
+
+        code = self._verification_codes.get(serial)
+        if not code:
+            # No code in the options: the cloud will hand out the camera's key
+            # to its own account, which is how the EZVIZ app does it.
+            try:
+                with self._api_lock:
+                    code = self.client.get_cam_key(serial)
+            except (PyEzvizError, OSError) as err:
+                _LOGGER.warning(
+                    "Snapshot for %s is encrypted and its key could not be"
+                    " fetched (%s). Add the device verification code under"
+                    " verification_codes, or turn off image encryption in the"
+                    " EZVIZ app",
+                    serial,
+                    err,
+                )
+                return None
+
+        try:
+            return decrypt_image(data, code)
+        except PyEzvizError as err:
+            _LOGGER.warning(
+                "Could not decrypt the snapshot for %s (%s) - is the"
+                " verification code correct?",
+                serial,
+                err,
+            )
+            return None
+
+    def _publish_image(self, serial: str, data: bytes) -> None:
+        """Cache and publish a JPEG for the image entity."""
+        self._snapshots[serial] = data
+        self._publish(
+            image_topic(serial),
+            base64.b64encode(data).decode("ascii"),
+            retain=True,
+        )
+        _LOGGER.info("Published a %d byte snapshot for %s", len(data), serial)
 
     def publish_snapshot(self, serial: str, url: str) -> None:
         """Download, decrypt if needed, and publish an alarm snapshot."""
@@ -286,34 +457,74 @@ class EzvizPushBridge:
             _LOGGER.warning("Could not download snapshot for %s: %s", serial, err)
             return
 
-        data = resp.content
-        if data[:16] == b"hikencodepicture":
-            code = self._codes.get(serial)
-            if not code:
-                _LOGGER.warning(
-                    "Snapshot for %s is encrypted but no verification code is"
-                    " configured - skipping. Add it under verification_codes,"
-                    " or turn off image encryption in the EZVIZ app",
-                    serial,
-                )
-                return
-            try:
-                data = decrypt_image(data, code)
-            except PyEzvizError as err:
-                _LOGGER.warning(
-                    "Could not decrypt snapshot for %s (%s) - is the"
-                    " verification code correct?",
-                    serial,
-                    err,
-                )
-                return
+        data = self._decrypt_image(serial, resp.content)
+        if data:
+            self._publish_image(serial, data)
 
-        self._publish(
-            f"{BASE_TOPIC}/{serial}/image",
-            base64.b64encode(data).decode("ascii"),
-            retain=True,
-        )
-        _LOGGER.info("Published a %d byte snapshot for %s", len(data), serial)
+    def capture_snapshot(self, serial: str) -> bytes | None:
+        """Make the camera take a picture now, publish it and return it.
+
+        This is also what wakes a sleeping battery camera: the cloud has to
+        reach the device to get a fresh frame out of it.
+        """
+        with self._api_lock:
+            response = self.client.capture_picture(serial, 1)
+
+        url = _first_image_url(response)
+        if not url:
+            _LOGGER.warning(
+                "Capture for %s returned no image URL: %s", serial, response
+            )
+            return None
+
+        try:
+            resp = requests.get(url, timeout=20)
+            resp.raise_for_status()
+        except requests.RequestException as err:
+            _LOGGER.warning("Could not download the capture for %s: %s", serial, err)
+            return None
+
+        data = self._decrypt_image(serial, resp.content)
+        if data:
+            self._publish_image(serial, data)
+        return data
+
+    # ------------------------------------------------------------------
+    # Event classification
+    # ------------------------------------------------------------------
+
+    def classify(
+        self, code: int, text: str, calling: bool, source: str
+    ) -> tuple[str, str]:
+        """Return the event type for one message, and how it was decided.
+
+        Push messages and polled messages number their events differently, so
+        each is looked up in its own table first. What follows is shared: the
+        codes the user has added in the options, then the other table, and
+        finally the message text, which says in words what the codes say in
+        numbers and is the only signal a brand new model is guaranteed to send.
+        """
+        if calling:
+            return EVENT_RING, "the message is a call"
+
+        primary = PUSH_ALERT_TYPES if source == "push" else POLL_SUBTYPES
+        secondary = POLL_SUBTYPES if source == "push" else PUSH_ALERT_TYPES
+
+        if (event_type := primary.get(code)) is not None:
+            return event_type, f"{source} code {code}"
+        if code in self._extra_ring:
+            return EVENT_RING, f"code {code} from the ring_codes option"
+        if code in self._extra_motion:
+            return EVENT_MOTION, f"code {code} from the motion_codes option"
+        if (event_type := secondary.get(code)) is not None:
+            return event_type, f"code {code}, known from the other message path"
+
+        if RING_PATTERN.search(text):
+            return EVENT_RING, f"the wording of {text!r}"
+        if MOTION_PATTERN.search(text):
+            return EVENT_MOTION, f"the wording of {text!r}"
+
+        return EVENT_ALARM, f"nothing recognised code {code} or {text!r}"
 
     # ------------------------------------------------------------------
     # EZVIZ push
@@ -337,9 +548,9 @@ class EzvizPushBridge:
         )
         _LOGGER.debug("Full push message: %s", msg)
 
-        # A ring never comes over push, only by polling. Motion does come over
-        # push, and usually just before the button is pressed, so treat any
-        # push as a cue to start polling hard.
+        # A ring usually comes by polling rather than push. Motion does come
+        # over push, and usually just before the button is pressed, so treat
+        # any push as a cue to start polling hard.
         self._burst_until = time.monotonic() + BURST_SECONDS
         self._poll_now.set()
 
@@ -358,18 +569,21 @@ class EzvizPushBridge:
             code = int(raw_code)
         except (TypeError, ValueError):
             code = -1
-        event_type = PUSH_ALERT_TYPES.get(code, EVENT_ALARM)
+
+        text = str(msg.get("alert") or "")
+        event_type, why = self.classify(code, text, False, "push")
 
         _LOGGER.info(
-            "%s (%s): %s",
-            self._names.get(serial, serial),
+            "%s (%s): %s, from %s",
+            self.device_name(serial),
             serial,
             event_type,
+            why,
         )
         if event_type == EVENT_ALARM:
             _LOGGER.info(
-                "Push alert code %s is not mapped yet; add it to"
-                " PUSH_ALERT_TYPES to give it a proper event type.",
+                "Push alert code %s is not mapped yet; add it to the"
+                " ring_codes or motion_codes option to classify it.",
                 raw_code,
             )
 
@@ -429,7 +643,26 @@ class EzvizPushBridge:
             return
 
         self.announce(serial)
-        self._publish(f"{BASE_TOPIC}/{serial}/event", json.dumps(payload))
+
+        # The catch-all entity carries every event; the doorbell and motion
+        # entities carry one kind each, so an automation can subscribe to the
+        # press alone without filtering on an attribute.
+        self._publish(event_topic(serial, "alerts"), json.dumps(payload))
+        if event_type == EVENT_RING:
+            self._publish(event_topic(serial, "doorbell"), json.dumps(payload))
+            self._publish(trigger_topic(serial, "ring"), "ON")
+        elif event_type == EVENT_MOTION:
+            self._publish(event_topic(serial, "motion"), json.dumps(payload))
+            self._publish(trigger_topic(serial, "motion_detected"), "ON")
+
+        state = self._event_state.setdefault(serial, {})
+        state["last_event"] = event_type
+        state["last_event_time"] = _now()
+        if event_type == EVENT_RING:
+            state["last_ring"] = state["last_event_time"]
+        elif event_type == EVENT_MOTION:
+            state["last_motion"] = state["last_event_time"]
+        self.publish_status(serial)
 
         if pic_url:
             self.publish_snapshot(serial, pic_url)
@@ -450,22 +683,38 @@ class EzvizPushBridge:
         except (TypeError, ValueError):
             code = -1
 
-        event_type = POLL_SUBTYPES.get(code, EVENT_ALARM)
+        text = " ".join(
+            str(value)
+            for value in (item.get("title"), item.get("detail"), ext.get("text"))
+            if value
+        )
+        event_type, why = self.classify(
+            code, text, bool(ext.get("callingStatus")), "poll"
+        )
 
-        # A ring is a call rather than an alarm, and says so outright.
-        if ext.get("callingStatus"):
-            event_type = EVENT_RING
-        elif event_type is EVENT_ALARM and ext.get("alarmType") is not None:
+        # A polled alarm can also name the push code it came from, which is
+        # worth a look before giving up and calling it a generic alarm.
+        if event_type is EVENT_ALARM and ext.get("alarmType") is not None:
             try:
-                event_type = PUSH_ALERT_TYPES.get(
-                    int(ext["alarmType"]), EVENT_ALARM
-                )
+                alarm_type = int(ext["alarmType"])
             except (TypeError, ValueError):
-                pass
+                alarm_type = -1
+            mapped = PUSH_ALERT_TYPES.get(alarm_type)
+            if mapped is not None:
+                event_type, why = mapped, f"alarmType {alarm_type}"
 
+        _LOGGER.info(
+            "%s (%s): %s, from %s",
+            self.device_name(serial or ""),
+            serial,
+            event_type,
+            why,
+        )
         if event_type is EVENT_ALARM:
             _LOGGER.info(
-                "Polled subType %s is not mapped yet, reported as '%s'",
+                "Polled subType %s is not mapped yet, reported as '%s'."
+                " Add it to the ring_codes or motion_codes option to classify"
+                " it.",
                 raw_code,
                 EVENT_ALARM,
             )
@@ -499,9 +748,10 @@ class EzvizPushBridge:
 
         while not self._stop.is_set() and not cycle_stop.is_set():
             try:
-                response = client.get_device_messages_list(
-                    serials=serials, limit=10, date="", end_time=""
-                )
+                with self._api_lock:
+                    response = client.get_device_messages_list(
+                        serials=serials, limit=10, date="", end_time=""
+                    )
                 items = response.get("message") or response.get("messages") or []
                 if not isinstance(items, list):
                     items = []
@@ -549,10 +799,110 @@ class EzvizPushBridge:
                 _LOGGER.debug("Poll woken early by a push")
                 return
 
+    # ------------------------------------------------------------------
+    # Device status
+    # ------------------------------------------------------------------
+
+    def _detection_sensitivity(self, client: EzvizClient, serial: str) -> Any:
+        """Return the current detection sensitivity, if the device has one."""
+        if serial in self._sensitivity_broken:
+            return None
+        for type_value in ("3", "0"):
+            try:
+                with self._api_lock:
+                    value = client.get_detection_sensibility(serial, type_value)
+            except (PyEzvizError, OSError) as err:
+                _LOGGER.debug(
+                    "Detection sensitivity type %s unavailable for %s: %s",
+                    type_value,
+                    serial,
+                    err,
+                )
+                continue
+            if value is not None:
+                return value
+
+        # Asking every minute for something this device does not report is
+        # just noise, so ask once and then stop.
+        self._sensitivity_broken.add(serial)
+        _LOGGER.info(
+            "%s does not report a detection sensitivity; its number entity"
+            " stays empty",
+            self.device_name(serial),
+        )
+        return None
+
+    def publish_status(self, serial: str) -> None:
+        """Publish the status document every read-only entity reads."""
+        status = self._status.get(serial)
+        if status is None:
+            # Before the first status poll there is nothing to report but the
+            # events themselves, and those should not have to wait for it.
+            status = build_status(serial, {}, self._event_state.get(serial, {}))
+            self._status[serial] = status
+        else:
+            status.update(self._event_state.get(serial, {}))
+        self._publish(status_topic(serial), json.dumps(status), retain=True)
+
+    def refresh_status(self, client: EzvizClient) -> None:
+        """Fetch every device's status and publish it."""
+        with self._api_lock:
+            devices = client.get_device_infos()
+
+        for serial, info in (devices or {}).items():
+            if self._serial_filter and serial not in self._serial_filter:
+                continue
+
+            try:
+                raw = EzvizCamera(client, serial, info).status(refresh=False)
+            except (PyEzvizError, OSError, KeyError, TypeError, ValueError) as err:
+                _LOGGER.warning("Could not read the status of %s: %s", serial, err)
+                continue
+
+            if raw.get("name"):
+                self._names[serial] = str(raw["name"])
+
+            extra: dict[str, Any] = {
+                "detection_sensitivity": self._detection_sensitivity(client, serial),
+                **self._event_state.get(serial, {}),
+            }
+            if self._liveview is not None:
+                extra.update(self._liveview.urls(serial))
+
+            self._status[serial] = build_status(serial, raw, extra)
+            self.announce_full(serial)
+            self.publish_status(serial)
+            self._publish(
+                update_topic(serial), json.dumps(firmware_payload(raw)), retain=True
+            )
+
+    def poll_status(
+        self, client: EzvizClient, interval: int, cycle_stop: threading.Event
+    ) -> None:
+        """Keep the status entities up to date until the cycle ends."""
+        while not self._stop.is_set() and not cycle_stop.is_set():
+            try:
+                self.refresh_status(client)
+            except (PyEzvizError, OSError) as err:
+                _LOGGER.warning("Status poll failed: %s", err)
+
+            deadline = time.monotonic() + interval
+            while time.monotonic() < deadline:
+                if cycle_stop.wait(POLL_TICK) or self._stop.is_set():
+                    return
+                if self._status_now.is_set():
+                    self._status_now.clear()
+                    break
+
+    # ------------------------------------------------------------------
+    # EZVIZ connection
+    # ------------------------------------------------------------------
+
     def load_devices(self, client: EzvizClient) -> dict[str, Any]:
         """Fetch device info so entities are not named after a serial."""
         try:
-            devices = client.get_device_infos()
+            with self._api_lock:
+                devices = client.get_device_infos()
         except (PyEzvizError, OSError) as err:
             _LOGGER.warning("Could not fetch device info: %s", err)
             return {}
@@ -588,7 +938,7 @@ class EzvizPushBridge:
             if self._serial_filter and serial not in self._serial_filter:
                 continue
 
-            name = self._names.get(serial, serial)
+            name = self.device_name(serial)
             nodisturb = (info or {}).get("NODISTURB") or {}
             if not nodisturb:
                 _LOGGER.info(
@@ -603,8 +953,9 @@ class EzvizPushBridge:
             if nodisturb.get("callingEnable"):
                 _LOGGER.warning(
                     "%s: doorbell call notifications are switched OFF in the"
-                    " EZVIZ app, so a button press is never pushed. Turn"
-                    " notifications back on for this device in the app.",
+                    " EZVIZ app, so a button press is never pushed. Turn them"
+                    " back on in the app, or with this add-on's 'Doorbell"
+                    " notifications' switch.",
                     name,
                 )
             if nodisturb.get("alarmEnable"):
@@ -727,14 +1078,57 @@ class EzvizPushBridge:
         self._save_token(client)
         return client
 
+    # ------------------------------------------------------------------
+    # Live view
+    # ------------------------------------------------------------------
+
+    def start_liveview(self) -> None:
+        """Start the HTTP server that serves live video, if it is enabled."""
+        if not self._options.get("live_stream", True):
+            _LOGGER.info("Live view is switched off (live_stream=false)")
+            return
+
+        token = liveview.load_token(
+            LIVE_TOKEN_PATH, str(self._options.get("live_stream_token") or "")
+        )
+        base_url = str(self._options.get("live_stream_url_base") or "").strip()
+        if not base_url:
+            # Add-ons resolve each other by container hostname on the
+            # Supervisor's network, which is how Home Assistant will reach us.
+            host = os.environ.get("HOSTNAME") or socket.gethostname()
+            base_url = f"http://{host}:{liveview.PORT}"
+
+        server = liveview.LiveViewServer(
+            self,
+            liveview.PORT,
+            token,
+            base_url,
+            mjpeg_interval=float(self._options.get("snapshot_interval") or 3),
+        )
+        try:
+            server.start()
+        except OSError as err:
+            _LOGGER.error("Could not start the live view server: %s", err)
+            return
+        self._liveview = server
+
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
+
     def run(self) -> None:
         """Run until stopped, reconnecting to EZVIZ as needed."""
         self.connect_mqtt()
+        self.start_liveview()
+        threading.Thread(
+            target=self._command_worker, name="ezviz-commands", daemon=True
+        ).start()
 
         while not self._stop.is_set():
             push_client = None
-            # Bounds the poll thread to this connection cycle, so a reconnect
-            # never leaves a second one running against a stale client.
+            # Bounds the worker threads to this connection cycle, so a
+            # reconnect never leaves a second one running against a stale
+            # client.
             cycle_stop = threading.Event()
             try:
                 try:
@@ -751,6 +1145,7 @@ class EzvizPushBridge:
                     self._stop.wait(300)
                     continue
 
+                self._client = client
                 devices = self.load_devices(client)
                 self.check_notifications(devices)
                 for serial in self._serial_filter:
@@ -775,7 +1170,7 @@ class EzvizPushBridge:
                     ).start()
                     _LOGGER.info(
                         "Polling every %ss, dropping to %ss for %ss after any"
-                        " push. A ring is only ever seen by polling, so this"
+                        " push. A ring is usually only seen by polling, so this"
                         " interval is its worst case latency.",
                         poll_interval,
                         BURST_INTERVAL,
@@ -783,6 +1178,23 @@ class EzvizPushBridge:
                     )
                 else:
                     _LOGGER.info("Message polling is off (poll_interval=0)")
+
+                status_interval = int(self._options.get("status_interval") or 0)
+                if status_interval > 0:
+                    threading.Thread(
+                        target=self.poll_status,
+                        args=(client, status_interval, cycle_stop),
+                        name="ezviz-status",
+                        daemon=True,
+                    ).start()
+                    _LOGGER.info(
+                        "Refreshing device status every %ss", status_interval
+                    )
+                else:
+                    _LOGGER.info(
+                        "Status refresh is off (status_interval=0); only the"
+                        " event entities will update"
+                    )
 
                 while not self._stop.is_set():
                     self._stop.wait(1)
@@ -792,6 +1204,7 @@ class EzvizPushBridge:
                 self._stop.wait(60)
             finally:
                 cycle_stop.set()
+                self._client = None
                 if push_client is not None:
                     try:
                         push_client.stop()
@@ -806,12 +1219,38 @@ class EzvizPushBridge:
 
     def shutdown(self) -> None:
         """Publish an offline message and disconnect from MQTT."""
+        if self._liveview is not None:
+            self._liveview.stop()
         if self._mqtt is None:
             return
         self._mqtt.publish(AVAILABILITY_TOPIC, "offline", retain=True)
         self._mqtt.loop_stop()
         self._mqtt.disconnect()
         _LOGGER.info("Stopped")
+
+
+def _first_image_url(value: Any) -> str | None:
+    """Return the first HTTP(S) image URL anywhere in an EZVIZ response.
+
+    Which key holds the picture depends on the endpoint and the model, and
+    several of them pack more than one URL into a semicolon separated string.
+    """
+    if isinstance(value, str):
+        for part in value.split(";"):
+            text = part.strip()
+            if text.startswith(("http://", "https://")):
+                return text
+        return None
+    if isinstance(value, dict):
+        values: Any = value.values()
+    elif isinstance(value, list):
+        values = value
+    else:
+        return None
+    for item in values:
+        if found := _first_image_url(item):
+            return found
+    return None
 
 
 def main() -> int:
@@ -826,10 +1265,11 @@ def main() -> int:
     # Echo the effective configuration, so a setting that did not take can be
     # spotted from the log rather than guessed at.
     _LOGGER.info(
-        "Starting: log_level=%s poll_interval=%ss region=%s serials=%s"
-        " verification_codes_for=%s",
+        "Starting: log_level=%s poll_interval=%ss status_interval=%ss region=%s"
+        " serials=%s verification_codes_for=%s",
         options.get("log_level"),
         options.get("poll_interval"),
+        options.get("status_interval"),
         options.get("ezviz_region"),
         options.get("serials") or "(all devices)",
         [
