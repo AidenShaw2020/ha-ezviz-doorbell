@@ -35,6 +35,8 @@ from custom_components.ezviz_doorbell.diagnostics import (
 )
 from custom_components.ezviz_doorbell.const import (
     CAMERA_SUBENTRY,
+    CAPTURE_ALWAYS,
+    CONF_CAPTURE_WHEN_MISSING,
     CONF_DEVICES,
     CONF_SERIAL,
     CONF_VERIFICATION_CODE,
@@ -676,3 +678,105 @@ async def test_a_reload_does_not_announce_what_already_happened(
     await hass.async_block_till_done()
 
     assert hass.states.get("event.front_door_doorbell").state != "unknown"
+
+
+async def test_the_picture_survives_a_duplicate(
+    hass: HomeAssistant, ezviz_client: MagicMock
+) -> None:
+    """The second copy of an event often carries the picture the first lacked.
+
+    A push announces the ring with nothing attached and the polled copy that
+    follows has the picture. Dropping the duplicate whole dropped that too,
+    which is why a notification sometimes had a photo and sometimes did not.
+    """
+    entry = await _setup_with(hass, ezviz_client, {})
+    coordinator = entry.runtime_data
+
+    with patch.object(
+        coordinator, "async_download_snapshot", return_value=b"jpeg"
+    ) as download:
+        await coordinator._async_handle_push(
+            {
+                "alert": "Your doorbell is ringing",
+                "ext": {"device_serial": SERIAL, "alert_type_code": 0, "msgId": "a"},
+            }
+        )
+        await coordinator._async_handle_polled(
+            {
+                "deviceSerial": SERIAL,
+                "subType": 2701,
+                "title": "Your doorbell is ringing",
+                "msgId": "b",
+                "pic": "https://pic.invalid/ring.jpg",
+            }
+        )
+        await hass.async_block_till_done()
+
+    download.assert_called_once_with(SERIAL, "https://pic.invalid/ring.jpg")
+
+
+async def test_a_ring_with_no_picture_goes_and_takes_one(
+    hass: HomeAssistant, ezviz_client: MagicMock
+) -> None:
+    """Somebody at the door is worth a wake-up and a round trip."""
+    entry = await _setup_with(hass, ezviz_client, {})
+    coordinator = entry.runtime_data
+
+    with patch.object(coordinator, "async_capture", return_value=b"jpeg") as capture:
+        await coordinator._async_handle_push(
+            {
+                "alert": "Your doorbell is ringing",
+                "ext": {"device_serial": SERIAL, "alert_type_code": 0, "msgId": "c"},
+            }
+        )
+        await hass.async_block_till_done()
+
+    capture.assert_called_once_with(SERIAL)
+
+
+async def test_motion_with_no_picture_costs_nothing(
+    hass: HomeAssistant, ezviz_client: MagicMock
+) -> None:
+    """Motion is too frequent to wake the camera for."""
+    entry = await _setup_with(hass, ezviz_client, {})
+    coordinator = entry.runtime_data
+
+    with patch.object(coordinator, "async_capture", return_value=b"jpeg") as capture:
+        await coordinator._async_handle_push(
+            {
+                "alert": "AI Human Detection",
+                "ext": {
+                    "device_serial": SERIAL,
+                    "alert_type_code": 10120,
+                    "msgId": "d",
+                },
+            }
+        )
+        await hass.async_block_till_done()
+
+    capture.assert_not_called()
+
+
+async def test_a_picture_can_be_forced_for_motion_too(
+    hass: HomeAssistant, ezviz_client: MagicMock
+) -> None:
+    """A camera only refreshes its picture when something makes it."""
+    entry = await _setup_with(
+        hass, ezviz_client, {CONF_CAPTURE_WHEN_MISSING: CAPTURE_ALWAYS}
+    )
+    coordinator = entry.runtime_data
+
+    with patch.object(coordinator, "async_capture", return_value=b"jpeg") as capture:
+        await coordinator._async_handle_push(
+            {
+                "alert": "AI Human Detection",
+                "ext": {
+                    "device_serial": SERIAL,
+                    "alert_type_code": 10120,
+                    "msgId": "e",
+                },
+            }
+        )
+        await hass.async_block_till_done()
+
+    capture.assert_called_once_with(SERIAL)

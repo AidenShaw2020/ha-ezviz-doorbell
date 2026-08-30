@@ -32,7 +32,10 @@ from homeassistant.util import dt as dt_util
 from .const import (
     BURST_INTERVAL,
     BURST_SECONDS,
+    CAPTURE_ALWAYS,
+    CAPTURE_RING,
     CAMERA_SUBENTRY,
+    CONF_CAPTURE_WHEN_MISSING,
     CONF_DEVICES,
     CONF_MOTION_CODES,
     CONF_POLL_INTERVAL,
@@ -54,6 +57,7 @@ from .const import (
     MOTION_PATTERN,
     POLL_SUBTYPES,
     PUSH_ALERT_TYPES,
+    PICTURE_FRESH_SECONDS,
     RING_PATTERN,
     SETTLE_SECONDS,
     signal_event,
@@ -207,6 +211,9 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
         # Wide enough to cover a poll arriving after a push for the same event,
         # but no wider, so two genuine presses are not merged into one.
         self._dedupe_window = max(15, poll_interval + 10)
+        self._capture_when_missing = options.get(
+            CONF_CAPTURE_WHEN_MISSING, CAPTURE_RING
+        )
         self._extra_ring = _codes(options.get(CONF_RING_CODES))
         self._extra_motion = _codes(options.get(CONF_MOTION_CODES))
 
@@ -700,6 +707,13 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
                 event_type,
                 serial,
             )
+            # The copy that arrives second often carries the picture the first
+            # one did not: a push announces the ring with nothing attached, and
+            # the polled copy that follows has the picture. Dropping the
+            # duplicate whole dropped that with it, which is why a notification
+            # sometimes had a photo and sometimes did not.
+            if picture_url and not self._has_fresh_picture(serial):
+                await self.async_download_snapshot(serial, picture_url)
             return
 
         device = self.data[serial]
@@ -724,6 +738,32 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
 
         if picture_url:
             await self.async_download_snapshot(serial, picture_url)
+        elif self._should_capture(event_type) and not self._has_fresh_picture(
+            serial
+        ):
+            # Nothing came with the message, so go and get one - the camera
+            # only refreshes its picture when something makes it.
+            _LOGGER.debug("Ring for %s came with no picture; taking one", serial)
+            try:
+                await self.async_capture(serial)
+            except (PyEzvizError, OSError, HomeAssistantError) as err:
+                _LOGGER.info("Could not take a picture for %s: %s", serial, err)
+
+    def _should_capture(self, event_type: str) -> bool:
+        """Return whether to take a picture for an event that brought none."""
+        if self._capture_when_missing == CAPTURE_ALWAYS:
+            return True
+        return (
+            self._capture_when_missing == CAPTURE_RING and event_type == EVENT_RING
+        )
+
+    def _has_fresh_picture(self, serial: str) -> bool:
+        """Return whether this camera's picture belongs to what just happened."""
+        device = self.data.get(serial)
+        if device is None or device.snapshot_time is None:
+            return False
+        age = (dt_util.utcnow() - device.snapshot_time).total_seconds()
+        return age < PICTURE_FRESH_SECONDS
 
     # ------------------------------------------------------------------
     # Pictures

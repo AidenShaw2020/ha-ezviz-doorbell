@@ -22,6 +22,14 @@ CONF_LIVE_STREAM: Final = "live_stream"
 CONF_RING_CODES: Final = "ring_codes"
 CONF_MOTION_CODES: Final = "motion_codes"
 CONF_DEVICES: Final = "devices"
+# When to go and take a picture because the event did not bring one. Doing it
+# wakes a battery camera and costs a cloud round trip, which is worth it for
+# somebody at the door and rarely worth it for the twentieth passing car.
+CONF_CAPTURE_WHEN_MISSING: Final = "capture_when_missing"
+CAPTURE_NEVER: Final = "never"
+CAPTURE_RING: Final = "ring"
+CAPTURE_ALWAYS: Final = "always"
+CAPTURE_CHOICES: Final = [CAPTURE_NEVER, CAPTURE_RING, CAPTURE_ALWAYS]
 # The verification codes, as serial to code. In the account's own data, where
 # Reconfigure edits them; also the name of the old single text option, which
 # is still read so that nobody's setting quietly disappears.
@@ -58,6 +66,11 @@ BURST_INTERVAL: Final = 1.0
 # reload otherwise announces whatever happened last - hours ago, as if it had
 # just happened.
 SETTLE_SECONDS: Final = 15.0
+
+# How recent a picture has to be to count as belonging to the event in hand.
+# Two paths report the same event seconds apart, and only one of them tends to
+# carry a picture, so the second is worth reading for that alone.
+PICTURE_FRESH_SECONDS: Final = 30.0
 
 # Push and polled messages use two different code spaces, so they get two
 # different maps. Anything unmapped is reported as a generic alarm with the raw

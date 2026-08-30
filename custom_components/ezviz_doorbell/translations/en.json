@@ -62,13 +62,15 @@
           "snapshot_interval": "Seconds between still pictures",
           "ring_codes": "Extra alert codes that mean a ring",
           "motion_codes": "Extra alert codes that mean motion",
-          "devices": "Cameras to include"
+          "devices": "Cameras to include",
+          "capture_when_missing": "Take a picture when an event brings none"
         },
         "data_description": {
           "poll_interval": "A doorbell press only ever arrives by polling, so this is its worst case delay. Any push drops the poll to one a second for half a minute, which is where a press usually lands. 0 switches polling off.",
           "snapshot_interval": "Each picture is a round trip to the cloud and wakes the camera, so short intervals cost battery.",
           "ring_codes": "Comma separated. Only needed for a model whose codes are not recognised - the log names the code next to every unrecognised event.",
           "motion_codes": "Comma separated.",
+          "capture_when_missing": "A camera only refreshes its picture when something makes it, and not every event arrives with one. never, ring or always - taking one wakes a battery camera, which is worth it for somebody at the door and rarely worth it for the twentieth passing car.",
           "devices": "Only doorbells are used unless something is picked here. Tick a camera to bring it in as well."
         }
       }

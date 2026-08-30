@@ -32,6 +32,9 @@ from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv
 
 from .const import (
+    CAPTURE_CHOICES,
+    CAPTURE_RING,
+    CONF_CAPTURE_WHEN_MISSING,
     CONF_DEVICES,
     CONF_LIVE_STREAM,
     CONF_MOTION_CODES,
@@ -383,6 +386,10 @@ class EzvizDoorbellOptionsFlow(OptionsFlow):
                         CONF_SNAPSHOT_INTERVAL, DEFAULT_SNAPSHOT_INTERVAL
                     ),
                 ): vol.All(vol.Coerce(int), vol.Range(min=1, max=60)),
+                vol.Required(
+                    CONF_CAPTURE_WHEN_MISSING,
+                    default=options.get(CONF_CAPTURE_WHEN_MISSING, CAPTURE_RING),
+                ): vol.In(CAPTURE_CHOICES),
                 vol.Optional(
                     CONF_RING_CODES,
                     default=options.get(CONF_RING_CODES, ""),

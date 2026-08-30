@@ -62,13 +62,15 @@
           "snapshot_interval": "Sekundy mezi snímky",
           "ring_codes": "Další kódy, které znamenají zvonění",
           "motion_codes": "Další kódy, které znamenají pohyb",
-          "devices": "Zahrnuté kamery"
+          "devices": "Zahrnuté kamery",
+          "capture_when_missing": "Pořídit snímek, když událost žádný nenese"
         },
         "data_description": {
           "poll_interval": "Stisk zvonku přijde jedině dotazováním, takže tohle je jeho nejhorší možné zpoždění. Po každém pushi se dotazování na půl minuty zrychlí na jednou za sekundu, což je přesně doba, kdy stisk obvykle přijde. 0 dotazování vypne.",
           "snapshot_interval": "Každý snímek je cesta do cloudu a probuzení kamery, takže krátké intervaly stojí baterii.",
           "ring_codes": "Oddělené čárkou. Potřeba jen u modelu, jehož kódy zatím nikdo nezmapoval - log u každé nerozpoznané události kód vypíše.",
           "motion_codes": "Oddělené čárkou.",
+          "capture_when_missing": "Kamera fotku obnoví jen když ji k tomu něco donutí a ne každá událost ji nese s sebou. never, ring nebo always - pořízení snímku probudí kameru na baterii, což se vyplatí u někoho za dveřmi a jen zřídka u dvacátého projetého auta.",
           "devices": "Bez výběru se použijí jen zvonky. Zaškrtnutím přibereš i kameru."
         }
       }

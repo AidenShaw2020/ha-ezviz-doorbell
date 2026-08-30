@@ -105,6 +105,12 @@ because the session is stored and refreshed from then on. Needs Home Assistant
 - **Offer live video** (default on) — turns the camera's stream on or off.
 - **Seconds between still pictures** (default 3) — each one is a round trip to
   the cloud and wakes the camera, so short intervals cost battery.
+- **Take a picture when an event brings none** (default `ring`) — `never`,
+  `ring` or `always`. A camera refreshes its picture only when something makes
+  it, and not every event arrives with one, so a notification could end up
+  showing nothing. Taking one wakes a battery camera and costs a cloud round
+  trip; on a doorbell with a power adapter, `always` costs nothing worth
+  counting.
 - **Extra alert codes that mean a ring / motion** — comma separated, only needed
   for a model whose codes are not recognised yet.
 - **Cameras to include** — only devices EZVIZ files as a doorbell are used
