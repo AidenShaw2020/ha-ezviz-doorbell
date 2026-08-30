@@ -22,6 +22,13 @@ OUT_DIR = ROOT / "ezviz_doorbell_push"
 ICON_SIZE = 512  # square; the Supervisor scales it down for the add-on card
 LOGO_WIDTH = 900  # height follows the source aspect ratio
 
+# Home Assistant does not read an integration's logo from the integration. It
+# fetches it from brands.home-assistant.io by domain, so these are built to
+# that repository's sizes, ready to be submitted there. See the README.
+BRANDS_DIR = ROOT / "brands" / "custom_integrations" / "ezviz_doorbell"
+BRANDS_ICON = 256  # and twice that for the @2x
+BRANDS_LOGO_WIDTH = 512  # at most 256 high, which 3:1 artwork clears easily
+
 
 def make_icon() -> None:
     """Write the square add-on icon."""
@@ -40,11 +47,35 @@ def make_logo() -> None:
     print(f"  logo.png  {logo.width}x{logo.height}")
 
 
+def make_brand_images() -> None:
+    """Write the four images the brands repository asks for."""
+    BRANDS_DIR.mkdir(parents=True, exist_ok=True)
+
+    icon = Image.open(ASSETS / "icon-source.png").convert("RGBA")
+    for name, size in (("icon.png", BRANDS_ICON), ("icon@2x.png", BRANDS_ICON * 2)):
+        icon.resize((size, size), Image.LANCZOS).save(
+            BRANDS_DIR / name, "PNG", optimize=True
+        )
+        print(f"  brands/{name}  {size}x{size}")
+
+    logo = Image.open(ASSETS / "logo-source.png").convert("RGBA")
+    for name, width in (
+        ("logo.png", BRANDS_LOGO_WIDTH),
+        ("logo@2x.png", BRANDS_LOGO_WIDTH * 2),
+    ):
+        height = round(width * logo.height / logo.width)
+        logo.resize((width, height), Image.LANCZOS).save(
+            BRANDS_DIR / name, "PNG", optimize=True
+        )
+        print(f"  brands/{name}  {width}x{height}")
+
+
 def main() -> None:
-    """Generate both images."""
+    """Generate every image this repository ships."""
     print(f"Writing artwork to {OUT_DIR}")
     make_icon()
     make_logo()
+    make_brand_images()
 
 
 if __name__ == "__main__":

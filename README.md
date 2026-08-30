@@ -94,6 +94,15 @@ Assistant.
 **By hand:** copy `custom_components/ezviz_doorbell` into your
 `config/custom_components/`, restart Home Assistant.
 
+### The icon
+
+Home Assistant fetches an integration's logo from `brands.home-assistant.io` by
+domain, not from the integration folder, so this one shows the generic puzzle
+piece until the artwork is submitted to
+[home-assistant/brands](https://github.com/home-assistant/brands). It is built
+and waiting in [brands/](brands/) — see the README there for the two commands
+and the pull request. Nothing needs releasing here once it is merged.
+
 Then **Settings → Devices & services → Add integration → EZVIZ Doorbell** and
 sign in with the account the doorbell is registered to. If EZVIZ wants a two
 factor code it emails one and the dialog asks for it; that is a one time step,
@@ -352,7 +361,8 @@ for credentials interactively and store nothing.
 - `ezviz_push_bridge.py` — a plain push listener forwarding to a Home Assistant
   webhook. Handy for discovering your alert codes.
 - `make_icons.py` — resizes `assets/` into the add-on's `icon.png` and
-  `logo.png`.
+  `logo.png`, and into the four sizes [brands/](brands/) needs for the
+  integration.
 
 ## License
 
