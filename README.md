@@ -22,7 +22,9 @@ other.
 is documented in [ezviz_doorbell_push/DOCS.md](ezviz_doorbell_push/DOCS.md); it
 will stay until the integration has been proven on real hardware.
 
-Both run beside the built-in `ezviz` integration and change nothing about it.
+The **add-on** runs beside the built-in `ezviz` integration and changes nothing
+about it. The **integration replaces it** — see below for why they cannot share
+a Home Assistant.
 
 ---
 
@@ -113,6 +115,30 @@ because the session is stored and refreshed from then on. Needs Home Assistant
   the cloud and wakes the camera, so short intervals cost battery.
 - **Extra alert codes that mean a ring / motion** — comma separated, only needed
   for a model whose codes are not recognised yet.
+
+### It replaces the built-in EZVIZ integration
+
+Both talk to EZVIZ through the same library, `pyezvizapi`, and they need
+different versions of it: Home Assistant pins `1.0.0.7` for the built-in
+integration, while the push channel, on-demand snapshots, the wake request and
+the cloud stream only exist from `1.0.5.0`. There is one `site-packages` per
+Home Assistant, so whichever was set up last decides which version is on disk,
+and they overwrite each other on every restart.
+
+**Remove the built-in EZVIZ integration and restart Home Assistant.** This one
+does everything it did.
+
+Left in place, this integration still loads and still delivers the doorbell
+ring — that arrives by polling, which the older library can do — but it says in
+the log what it has lost:
+
+```
+An older pyezvizapi is installed than this integration asks for, so these are
+unavailable: instant motion over push (polling still delivers events);
+snapshots and live stills taken on demand; asking a sleeping camera to stay
+awake; the detection type setting; keeping the session across restarts; live
+video from the cloud stream.
+```
 
 ## A ring is not an alarm, and neither is motion
 

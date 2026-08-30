@@ -57,7 +57,9 @@ class EzvizDoorbellCamera(EzvizDoorbellEntity, Camera):
         self._snapshot_interval = float(
             options.get(CONF_SNAPSHOT_INTERVAL, DEFAULT_SNAPSHOT_INTERVAL)
         )
-        if self._live_stream:
+        # Advertising a stream the installed pyezvizapi cannot open would put
+        # a play button on the card that only ever fails.
+        if self._live_stream and coordinator.cloud_stream is not None:
             self._attr_supported_features = CameraEntityFeature.STREAM
         self._capture_lock = asyncio.Lock()
 
@@ -72,7 +74,7 @@ class EzvizDoorbellCamera(EzvizDoorbellEntity, Camera):
 
     async def stream_source(self) -> str | None:
         """Return the URL the stream component should open."""
-        if not self._live_stream:
+        if not self._live_stream or self.coordinator.cloud_stream is None:
             return None
         token = self.coordinator.config_entry.data.get(CONF_STREAM_TOKEN)
         if not token:

@@ -16,8 +16,8 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
 from .const import CONF_STREAM_TOKEN, DOMAIN
-from .coordinator import EzvizDoorbellCoordinator
-from .stream_view import EzvizStreamView
+from .coordinator import EzvizDoorbellCoordinator, report_library
+from .stream_view import EzvizStreamView, import_cloud_stream
 
 type EzvizDoorbellConfigEntry = ConfigEntry[EzvizDoorbellCoordinator]
 
@@ -40,10 +40,15 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: EzvizDoorbellConfigEntry
 ) -> bool:
     """Set up one EZVIZ account."""
+    # Importing reads from disk, so it happens off the event loop, once.
+    cloud_stream = await hass.async_add_executor_job(import_cloud_stream)
+    report_library(cloud_stream is not None)
+
     _ensure_stream_token(hass, entry)
     _register_stream_view(hass)
 
     coordinator = EzvizDoorbellCoordinator(hass, entry)
+    coordinator.cloud_stream = cloud_stream
     await coordinator.async_login()
     await coordinator.async_config_entry_first_refresh()
     await coordinator.async_start_listening()

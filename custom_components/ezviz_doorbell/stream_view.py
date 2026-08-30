@@ -12,12 +12,12 @@ view carries a token generated for the config entry instead of the usual auth.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from contextlib import suppress
 import logging
 import secrets
 
 from aiohttp import web
-from pyezvizapi.cloud_stream import copy_cloud_stream_to_mpegts
 from pyezvizapi.exceptions import PyEzvizError
 
 from homeassistant.components.http import HomeAssistantView
@@ -27,6 +27,32 @@ from homeassistant.helpers.network import NoURLAvailableError, get_url
 from .const import CONF_STREAM_TOKEN, DOMAIN, ENCRYPTED_CLIP_SECONDS
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def import_cloud_stream() -> Callable[..., None] | None:
+    """Return pyezvizapi's cloud stream copier, or None if it has none.
+
+    The cloud stream arrived in pyezvizapi 1.0.5.0. Home Assistant's built-in
+    EZVIZ integration pins 1.0.0.7 into the same site-packages, and whichever
+    integration was set up last decides what is on disk - so this cannot be a
+    plain import at the top of the module, or an older library takes the whole
+    integration down with it, which is exactly what it did.
+
+    Nor is it enough to ask whether the module exists: after the newer files
+    are written, the older ones can still be the ones loaded, and importing the
+    new module then fails on a constant its own package no longer seems to
+    have. So the question is asked by importing, which is the only answer that
+    means anything. Run this in an executor - it reads from disk.
+    """
+    try:
+        from pyezvizapi.cloud_stream import (  # noqa: PLC0415
+            copy_cloud_stream_to_mpegts,
+        )
+    except ImportError as err:
+        _LOGGER.debug("No usable cloud stream in the installed pyezvizapi: %s", err)
+        return None
+    return copy_cloud_stream_to_mpegts
+
 
 # Enough to ride out a slow client without letting the stream run far ahead of
 # what has actually been sent.
@@ -67,6 +93,16 @@ class EzvizStreamView(HomeAssistantView):
         if coordinator is None or serial not in coordinator.data:
             return web.Response(status=404, text="Unknown camera")
 
+        copy_cloud_stream_to_mpegts = coordinator.cloud_stream
+        if copy_cloud_stream_to_mpegts is None:
+            _LOGGER.warning(
+                "This Home Assistant has pyezvizapi without the cloud stream."
+                " It is pinned to an older version by the built-in EZVIZ"
+                " integration; remove that integration and restart to get live"
+                " video. Snapshots work either way."
+            )
+            return web.Response(status=501, text="Live video needs pyezvizapi 1.0.5.0")
+
         # A sleeping battery camera answers nothing, so ask the cloud to keep
         # it awake before opening the stream.
         await coordinator.async_keep_awake(serial)
@@ -101,7 +137,7 @@ class EzvizStreamView(HomeAssistantView):
                 )
             except (BrokenPipeError, ConnectionResetError):
                 _LOGGER.debug("Live stream for %s closed by the client", serial)
-            except (PyEzvizError, OSError, ValueError) as err:
+            except (PyEzvizError, OSError, ValueError, ImportError) as err:
                 _LOGGER.warning("Live stream for %s failed: %s", serial, err)
             finally:
                 writer.close()

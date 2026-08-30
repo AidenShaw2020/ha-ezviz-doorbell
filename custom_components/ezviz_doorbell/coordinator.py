@@ -13,6 +13,7 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+import inspect
 import logging
 import threading
 import time
@@ -60,6 +61,50 @@ from .helpers import first_image_url
 _LOGGER = logging.getLogger(__name__)
 
 HIK_ENCRYPTION_HEADER = b"hikencodepicture"
+
+# Home Assistant's built-in EZVIZ integration pins pyezvizapi 1.0.0.7 into the
+# same site-packages this integration installs 1.0.5.0 into, and whichever was
+# set up last is the one on disk. Rather than fail to load against the older
+# one, every feature it lacks is checked for and reported, and the parts that
+# still work keep working - which includes the doorbell ring itself, because
+# that arrives by polling rather than over push.
+_STATUS_ACCEPTS_REFRESH = "refresh" in inspect.signature(EzvizCamera.status).parameters
+
+# Method on EzvizClient -> what is lost without it.
+OPTIONAL_METHODS: dict[str, str] = {
+    "get_mqtt_client": "instant motion over push (polling still delivers events)",
+    "capture_picture": "snapshots and live stills taken on demand",
+    "delay_battery_device_sleep": "asking a sleeping camera to stay awake",
+    "set_alarm_detect_human_car": "the detection type setting",
+    "export_token": "keeping the session across restarts",
+}
+
+
+def library_gaps(can_stream: bool) -> list[str]:
+    """Return what the installed pyezvizapi cannot do."""
+    gaps = [
+        description
+        for name, description in OPTIONAL_METHODS.items()
+        if not hasattr(EzvizClient, name)
+    ]
+    if not can_stream:
+        gaps.append("live video from the cloud stream")
+    return gaps
+
+
+def report_library(can_stream: bool) -> None:
+    """Say plainly which pyezvizapi is in use and what it costs."""
+    gaps = library_gaps(can_stream)
+    if not gaps:
+        return
+    _LOGGER.warning(
+        "An older pyezvizapi is installed than this integration asks for, so"
+        " these are unavailable: %s. Home Assistant's built-in EZVIZ"
+        " integration pins that older version into the same place; remove the"
+        " built-in EZVIZ integration and restart Home Assistant to get them"
+        " back. This integration replaces it.",
+        "; ".join(gaps),
+    )
 
 
 @dataclass
@@ -126,6 +171,8 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
         )
         self.client: EzvizClient | None = None
         self.data = {}
+        # pyezvizapi's cloud stream copier, when the installed version has one.
+        self.cloud_stream: Callable[..., None] | None = None
         # What the options said when this coordinator was built, so a later
         # entry update can be told from a real options change.
         self.loaded_options = dict(options)
@@ -168,7 +215,8 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
         """Log in, reusing the stored session when there is one."""
         client = self._create_client()
         client.login()
-        return client, client.export_token()
+        token = client.export_token() if hasattr(client, "export_token") else {}
+        return client, token
 
     async def async_login(self) -> None:
         """Log in and remember the refreshed session.
@@ -190,7 +238,7 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
 
     def _store_token(self, token: dict[str, Any]) -> None:
         """Persist a refreshed session, so a restart needs no new code."""
-        if token == self.config_entry.data.get(CONF_TOKEN):
+        if not token or token == self.config_entry.data.get(CONF_TOKEN):
             return
         self.hass.config_entries.async_update_entry(
             self.config_entry,
@@ -210,9 +258,12 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
         result: dict[str, dict[str, Any]] = {}
         for serial, info in (devices or {}).items():
             try:
+                camera = EzvizCamera(self.client, serial, info)
                 with self._api_lock:
-                    result[serial] = EzvizCamera(self.client, serial, info).status(
-                        refresh=False
+                    result[serial] = (
+                        camera.status(refresh=False)
+                        if _STATUS_ACCEPTS_REFRESH
+                        else camera.status()
                     )
             except (PyEzvizError, KeyError, TypeError, ValueError) as err:
                 _LOGGER.warning("Could not read the status of %s: %s", serial, err)
@@ -293,6 +344,13 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
     def _connect_push(self) -> None:
         """Connect to the EZVIZ push channel (executor thread)."""
         assert self.client is not None
+        if not hasattr(self.client, "get_mqtt_client"):
+            _LOGGER.warning(
+                "The installed pyezvizapi cannot open the push channel, so"
+                " motion will arrive by polling rather than instantly. The"
+                " doorbell ring is unaffected - it only ever arrives by polling"
+            )
+            return
         try:
             with self._api_lock:
                 push_client = self.client.get_mqtt_client(
@@ -635,6 +693,10 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
         reach the device to get a fresh frame out of it.
         """
 
+        if not hasattr(self.client, "capture_picture"):
+            _LOGGER.debug("The installed pyezvizapi cannot capture a picture")
+            return None
+
         def _capture() -> bytes | None:
             assert self.client is not None
             with self._api_lock:
@@ -673,6 +735,10 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
 
         try:
             result = await self.hass.async_add_executor_job(_run)
+        except AttributeError as err:
+            raise HomeAssistantError(
+                f"The installed pyezvizapi cannot do this: {err}"
+            ) from err
         except (PyEzvizError, OSError, ValueError, KeyError) as err:
             raise HomeAssistantError(f"EZVIZ refused the request: {err}") from err
 

@@ -263,3 +263,87 @@ async def test_unload(hass: HomeAssistant, loaded_entry: MockConfigEntry) -> Non
     # rather than removing it, which is what a reload has to look like.
     assert hass.states.get("camera.front_door").state == STATE_UNAVAILABLE
     assert loaded_entry.state is ConfigEntryState.NOT_LOADED
+
+
+async def test_it_loads_against_the_older_library(
+    hass: HomeAssistant, ezviz_client: MagicMock
+) -> None:
+    """The built-in EZVIZ integration pins an older pyezvizapi.
+
+    It lands in the same site-packages, so this integration has to cope with a
+    library that has no push channel, no capture and no session export, and
+    whose camera object takes no refresh argument. Everything that does not
+    depend on those still has to come up - the ring above all, which arrives by
+    polling either way.
+    """
+    old_client = MagicMock(
+        spec=[
+            "login",
+            "get_device_infos",
+            "get_device_messages_list",
+            "get_detection_sensibility",
+            "switch_status",
+            "close_session",
+        ]
+    )
+    old_client.get_device_infos.return_value = ezviz_client.get_device_infos()
+    old_client.get_device_messages_list.return_value = {"message": []}
+    old_client.get_detection_sensibility.return_value = 4
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="old@example.invalid",
+        data={
+            CONF_USERNAME: "old@example.invalid",
+            CONF_PASSWORD: "secret",
+            CONF_REGION: DEFAULT_REGION,
+        },
+    )
+    entry.add_to_hass(hass)
+
+    camera = MagicMock()
+    camera.return_value.status.return_value = RAW_STATUS
+    with (
+        patch(
+            "custom_components.ezviz_doorbell.coordinator.EzvizClient",
+            return_value=old_client,
+        ),
+        patch("custom_components.ezviz_doorbell.coordinator.EzvizCamera", camera),
+        patch(
+            "custom_components.ezviz_doorbell.coordinator._STATUS_ACCEPTS_REFRESH",
+            False,
+        ),
+        patch(
+            "custom_components.ezviz_doorbell.import_cloud_stream",
+            return_value=None,
+        ),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        # The status was read without the argument the older object lacks.
+        camera.return_value.status.assert_called_with()
+
+        assert hass.states.get("sensor.front_door_battery").state == "74"
+        assert hass.states.get("event.front_door_doorbell") is not None
+
+        # No stream is offered, so the card shows stills instead of a play
+        # button that could only fail.
+        camera_state = hass.states.get("camera.front_door")
+        assert camera_state.attributes["supported_features"] == 0
+
+        # And a ring still arrives, because polling is its path anyway.
+        await entry.runtime_data._async_handle_polled(
+            {
+                "deviceSerial": SERIAL,
+                "subType": 2701,
+                "title": "Your doorbell is ringing",
+                "msgId": "old1",
+                "ext": {"callingStatus": 1},
+            }
+        )
+        await hass.async_block_till_done()
+        assert (
+            hass.states.get("event.front_door_doorbell").attributes["event_type"]
+            == "ring"
+        )
