@@ -348,7 +348,10 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
         """Connect to the EZVIZ push channel (executor thread)."""
         assert self.client is not None
         if not hasattr(self.client, "get_mqtt_client"):
-            _LOGGER.warning(
+            # Reported once already, in full, by report_library(); saying it
+            # again at warning level only makes the same news look like two
+            # separate problems.
+            _LOGGER.info(
                 "The installed pyezvizapi cannot open the push channel, so"
                 " motion will arrive by polling rather than instantly. The"
                 " doorbell ring is unaffected - it only ever arrives by polling"
