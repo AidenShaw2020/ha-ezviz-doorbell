@@ -347,6 +347,11 @@ Worth knowing:
   whenever the phone is locked.
 - **`time-sensitive`** gets a ring through Focus and a Watch on wrist
   detection. Leave motion on `active` unless you want to hear about every cat.
+- **Tapping it can open the picture.** Home Assistant's Lovelace panel reads a
+  `more-info-entity-id` query parameter and opens that entity's dialog, so
+  `url: /lovelace/0?more-info-entity-id=image.front_door_last_snapshot` in the
+  same block lands on the snapshot itself. It has to be a dashboard path - the
+  device and settings pages ignore the parameter.
 - **Away from home the phone needs a way in.** The picture lives on your Home
   Assistant, and the notification carries a link to it rather than the bytes,
   so a phone on mobile data can only fetch it if the companion app has a
