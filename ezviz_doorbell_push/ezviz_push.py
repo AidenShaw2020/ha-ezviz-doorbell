@@ -393,6 +393,7 @@ class EzvizPushBridge:
                 serial,
                 switches,
             )
+            self.log_camera_setup(serial)
         else:
             _LOGGER.info("Re-announced %s: its entities or its name changed", serial)
 
@@ -831,6 +832,31 @@ class EzvizPushBridge:
             self.device_name(serial),
         )
         return None
+
+    def log_camera_setup(self, serial: str) -> None:
+        """Print the two values a Generic Camera has to be given.
+
+        MQTT discovery has no way to declare a stream source - its camera
+        platform only takes images - so the one entity this add-on cannot
+        create for you is the camera itself. Printing the URLs here means
+        setting it up is a copy and a paste rather than a hunt through the
+        entity list for a sensor that happens to hold a URL.
+        """
+        if self._liveview is None:
+            return
+
+        urls = self._liveview.urls(serial)
+        _LOGGER.info(
+            "Live video for %s is ready. Home Assistant cannot be given a"
+            " stream over MQTT, so add it once by hand: Settings > Devices &"
+            " services > Add integration > Generic Camera, leave username and"
+            " password empty, and paste\n"
+            "    Still Image URL:    %s\n"
+            "    Stream Source URL:  %s",
+            self.device_name(serial),
+            urls["snapshot_url"],
+            urls["live_stream_url"],
+        )
 
     def publish_status(self, serial: str) -> None:
         """Publish the status document every read-only entity reads."""

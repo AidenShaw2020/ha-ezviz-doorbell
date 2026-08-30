@@ -204,13 +204,37 @@ The full URLs, token included, are published as the **Live stream URL** and
 **Snapshot URL** sensors, and listed on the add-on's own index page at
 `http://<your-home-assistant>:8099/?token=…`.
 
-To get a camera entity out of it, add a **Generic Camera** integration and paste
-the two sensor values in:
+### Turning that into a camera entity
 
-- *Still image URL* → the **Snapshot URL** sensor
-- *Stream source URL* → the **Live stream URL** sensor
-- leave *RTSP transport* alone, and untick authentication — the token in the URL
-  is the authentication
+MQTT discovery has a `camera` platform, but it only takes images — there is no
+field in it for a stream source. No add-on can therefore create a video camera
+entity by itself; that takes an integration, which is why the built-in `ezviz`
+integration can show one and this add-on hands you a URL instead. Wiring it up
+is a one-time paste:
+
+1. **Start the add-on and open its log.** On the first status refresh it prints
+   both values for every camera, ready to copy:
+
+   ```
+   Live video for Front door is ready. ... paste
+       Still Image URL:    http://<add-on>:8099/D1234567/snapshot.jpg?token=…
+       Stream Source URL:  http://<add-on>:8099/D1234567/live.ts?token=…
+   ```
+
+   The same two values are always available as the **Snapshot URL** and **Live
+   stream URL** sensors on the device.
+
+2. **Settings → Devices & services → Add integration → Generic Camera.**
+3. Paste the first value into *Still Image URL* and the second into *Stream
+   Source URL*.
+4. Leave *Username* and *Password* empty — the token in the URL is the
+   authentication — and leave *RTSP transport protocol* alone; it is ignored for
+   an HTTP source.
+5. Confirm the preview. You now have a `camera.` entity with live video,
+   snapshots and recording, usable on any picture card.
+
+Home Assistant validates both URLs during that step, which means it fetches a
+picture — expect it to take a few seconds while a sleeping doorbell wakes up.
 
 Notes worth knowing before you judge the result:
 
