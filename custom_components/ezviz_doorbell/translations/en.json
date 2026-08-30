@@ -28,6 +28,10 @@
           "password": "Password",
           "region": "Region API address"
         }
+      },
+      "reconfigure": {
+        "title": "Verification codes",
+        "description": "A camera with encryption switched on needs a key before its pictures can be read. EZVIZ hands most accounts that key over its API and this integration asks for it; where it will not, the code printed on the device's own label is the way in. One box per camera, named by its serial number, which is on the same label: {cameras}. Leave a box empty to keep asking the API."
       }
     },
     "error": {
@@ -42,7 +46,9 @@
     },
     "abort": {
       "already_configured": "This EZVIZ account is already set up.",
-      "reauth_successful": "Signed in again."
+      "reauth_successful": "Signed in again.",
+      "reconfigure_successful": "Saved.",
+      "no_cameras": "No cameras have been found on this account yet."
     }
   },
   "options": {
@@ -63,39 +69,8 @@
           "snapshot_interval": "Each picture is a round trip to the cloud and wakes the camera, so short intervals cost battery.",
           "ring_codes": "Comma separated. Only needed for a model whose codes are not recognised - the log names the code next to every unrecognised event.",
           "motion_codes": "Comma separated.",
-          "devices": "Untick anything that is not a doorbell to keep its entities out of Home Assistant."
+          "devices": "Only doorbells are used unless something is picked here. Tick a camera to bring it in as well."
         }
-      }
-    }
-  },
-  "config_subentries": {
-    "camera": {
-      "entry_type": "Camera verification code",
-      "initiate_flow": {
-        "user": "Add a camera's verification code",
-        "reconfigure": "Change this camera's verification code"
-      },
-      "step": {
-        "user": {
-          "title": "Verification code",
-          "description": "EZVIZ hands most accounts the key to an encrypted camera over its API, and this integration asks for it. Where it will not, the code printed on the device's own label is the other way in - it decrypts the snapshots and the video.",
-          "data": {
-            "serial": "Camera",
-            "verification_code": "Verification code"
-          },
-          "data_description": {
-            "verification_code": "The letters on the label, usually six of them."
-          }
-        },
-        "reconfigure": {
-          "title": "Verification code",
-          "data": {
-            "verification_code": "Verification code"
-          }
-        }
-      },
-      "abort": {
-        "no_cameras": "Every camera on this account already has a code. Change one from its own entry instead."
       }
     }
   },

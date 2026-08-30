@@ -25,16 +25,13 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
-    ConfigSubentryFlow,
     OptionsFlow,
-    SubentryFlowResult,
 )
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv
 
 from .const import (
-    CAMERA_SUBENTRY,
     CONF_DEVICES,
     CONF_LIVE_STREAM,
     CONF_MOTION_CODES,
@@ -42,10 +39,8 @@ from .const import (
     CONF_REGION,
     CONF_RING_CODES,
     CONF_SNAPSHOT_INTERVAL,
-    CONF_SERIAL,
     CONF_STATUS_INTERVAL,
     CONF_TOKEN,
-    CONF_VERIFICATION_CODE,
     CONF_VERIFICATION_CODES,
     DEFAULT_POLL_INTERVAL,
     DEFAULT_REGION,
@@ -194,19 +189,57 @@ class EzvizDoorbellConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Change the verification codes.
+
+        A code is one camera's, but it is part of the account's configuration
+        rather than a thing of its own - so it lives in the entry's data and is
+        edited here, with one box per camera, instead of appearing in the list
+        of what this integration set up.
+        """
+        entry = self._get_reconfigure_entry()
+        cameras = _cameras(entry)
+        if not cameras:
+            return self.async_abort(reason="no_cameras")
+
+        if user_input is not None:
+            codes = {
+                serial: str(code).strip()
+                for serial, code in user_input.items()
+                if str(code).strip()
+            }
+            return self.async_update_reload_and_abort(
+                entry, data_updates={CONF_VERIFICATION_CODES: codes}
+            )
+
+        current = entry.data.get(CONF_VERIFICATION_CODES) or {}
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema(
+                {
+                    # The serial is the field name because it is what the code
+                    # is printed next to on the device.
+                    vol.Optional(
+                        serial,
+                        description={"suggested_value": current.get(serial, "")},
+                    ): cv.string
+                    for serial in cameras
+                }
+            ),
+            description_placeholders={
+                "cameras": ", ".join(
+                    f"{name} ({serial})" for serial, name in cameras.items()
+                )
+            },
+        )
+
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: Any) -> OptionsFlow:
         """Return the options flow."""
         return EzvizDoorbellOptionsFlow()
-
-    @classmethod
-    @callback
-    def async_get_supported_subentry_types(
-        cls, config_entry: ConfigEntry
-    ) -> dict[str, type[ConfigSubentryFlow]]:
-        """Return the kinds of thing that can be added under this account."""
-        return {CAMERA_SUBENTRY: CameraSubentryFlowHandler}
 
     # ------------------------------------------------------------------
     # Logging in
@@ -386,97 +419,12 @@ class EzvizDoorbellOptionsFlow(OptionsFlow):
         }
 
 
-class CameraSubentryFlowHandler(ConfigSubentryFlow):
-    """One camera's verification code, kept under that camera.
-
-    EZVIZ hands most accounts the key to an encrypted camera over its API, and
-    the integration asks for it - but not every account gets it, and then the
-    only source left is the code printed on the device itself. It belongs to
-    one camera, so it is stored against one camera.
-    """
-
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> SubentryFlowResult:
-        """Ask which camera, and for its code."""
-        entry = self._get_entry()
-        cameras = _cameras_without_a_code(entry)
-        if not cameras:
-            return self.async_abort(reason="no_cameras")
-
-        if user_input is not None:
-            serial = user_input[CONF_SERIAL]
-            # The subentry sits under the account in the UI, where the camera's
-            # own name reads better than a name with its serial after it.
-            return self.async_create_entry(
-                title=cameras[serial],
-                data={
-                    CONF_SERIAL: serial,
-                    CONF_VERIFICATION_CODE: user_input[
-                        CONF_VERIFICATION_CODE
-                    ].strip(),
-                },
-                unique_id=serial,
-            )
-
-        return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema(
-                {
-                    # The serial is on the same label as the code, so it is
-                    # worth showing next to the name here.
-                    vol.Required(CONF_SERIAL): vol.In(
-                        {
-                            serial: f"{name} ({serial})"
-                            for serial, name in cameras.items()
-                        }
-                    ),
-                    vol.Required(CONF_VERIFICATION_CODE): cv.string,
-                }
-            ),
-        )
-
-    async def async_step_reconfigure(
-        self, user_input: dict[str, Any] | None = None
-    ) -> SubentryFlowResult:
-        """Change a code that has already been given."""
-        subentry = self._get_reconfigure_subentry()
-
-        if user_input is not None:
-            return self.async_update_and_abort(
-                self._get_entry(),
-                subentry,
-                data_updates={
-                    CONF_VERIFICATION_CODE: user_input[
-                        CONF_VERIFICATION_CODE
-                    ].strip()
-                },
-            )
-
-        return self.async_show_form(
-            step_id="reconfigure",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        CONF_VERIFICATION_CODE,
-                        default=subentry.data.get(CONF_VERIFICATION_CODE, ""),
-                    ): cv.string
-                }
-            ),
-        )
-
-
-def _cameras_without_a_code(entry: ConfigEntry) -> dict[str, str]:
-    """Return serial to name for the cameras that have no code yet."""
+def _cameras(entry: ConfigEntry) -> dict[str, str]:
+    """Return serial to name for the cameras this account handles."""
     coordinator = getattr(entry, "runtime_data", None)
     known = getattr(coordinator, "data", None) or {}
-    taken = {
-        subentry.data.get(CONF_SERIAL)
-        for subentry in entry.subentries.values()
-        if subentry.subentry_type == CAMERA_SUBENTRY
-    }
-    return {
-        serial: device.name
-        for serial, device in known.items()
-        if serial not in taken
-    }
+    if known:
+        return {serial: device.name for serial, device in known.items()}
+    # Not loaded: at least offer the ones a code was already given for.
+    stored = entry.data.get(CONF_VERIFICATION_CODES) or {}
+    return {serial: serial for serial in stored}

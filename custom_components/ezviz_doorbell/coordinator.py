@@ -43,6 +43,7 @@ from .const import (
     CONF_TOKEN,
     CONF_VERIFICATION_CODE,
     CONF_VERIFICATION_CODES,
+    DOORBELL_CATEGORIES,
     DEFAULT_POLL_INTERVAL,
     DEFAULT_REGION,
     DEFAULT_STATUS_INTERVAL,
@@ -191,6 +192,7 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
         self._poll_primed = False
         self._recent: dict[str, float] = {}
         self._sensitivity_broken: set[str] = set()
+        self._warned_about_categories = False
 
         poll_interval = options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
         # Wide enough to cover a poll arriving after a push for the same event,
@@ -267,9 +269,10 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
         with self._api_lock:
             devices = self.client.get_device_infos()
 
+        wanted = self._wanted(devices or {})
         result: dict[str, dict[str, Any]] = {}
         for serial, info in (devices or {}).items():
-            if self._only and serial not in self._only:
+            if serial not in wanted:
                 continue
             try:
                 camera = EzvizCamera(self.client, serial, info)
@@ -282,6 +285,38 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
             except (PyEzvizError, KeyError, TypeError, ValueError) as err:
                 _LOGGER.warning("Could not read the status of %s: %s", serial, err)
         return result
+
+    def _wanted(self, devices: dict[str, Any]) -> set[str]:
+        """Return the serials to build entities for.
+
+        An EZVIZ account usually holds cameras that have nothing to do with a
+        doorbell, and forty entities each is no use to anyone. So unless the
+        options name particular devices, only what EZVIZ calls a doorbell is
+        taken - and if that is nothing at all, the account is presumably all
+        cameras and the choice is handed back rather than showing an empty
+        integration.
+        """
+        if self._only:
+            return {serial for serial in devices if serial in self._only}
+
+        doorbells = {
+            serial
+            for serial, info in devices.items()
+            if str(((info or {}).get("deviceInfos") or {}).get("deviceCategory") or "")
+            in DOORBELL_CATEGORIES
+        }
+        if doorbells:
+            return doorbells
+
+        if not self._warned_about_categories:
+            self._warned_about_categories = True
+            _LOGGER.info(
+                "No device on this account calls itself a doorbell, so all %d"
+                " of them are being used. Pick the ones you want under the"
+                " integration's options",
+                len(devices),
+            )
+        return set(devices)
 
     async def _async_update_data(self) -> dict[str, DeviceData]:
         """Refresh every device's status."""
@@ -873,11 +908,14 @@ def _int(value: Any) -> int:
 def verification_codes(entry: ConfigEntry) -> dict[str, str]:
     """Return the verification code configured for each camera.
 
-    They live in a subentry per camera, which is what puts one under the camera
-    it belongs to. The old single text field is still read first, so that an
-    upgrade does not quietly drop a code somebody had already set.
+    They are part of the account's own data, edited through Reconfigure. The
+    two places they used to live - a text option, then a subentry per camera -
+    are still read first, so an upgrade carries an existing code across.
     """
     codes = _codes_from_text(entry.options.get(CONF_VERIFICATION_CODES))
+    stored = entry.data.get(CONF_VERIFICATION_CODES)
+    if isinstance(stored, dict):
+        codes.update({str(k): str(v) for k, v in stored.items() if k and v})
     for subentry in entry.subentries.values():
         if subentry.subentry_type != CAMERA_SUBENTRY:
             continue

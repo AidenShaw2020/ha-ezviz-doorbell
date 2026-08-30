@@ -100,20 +100,19 @@ class EzvizStreamView(HomeAssistantView):
         # it awake before opening the stream.
         await coordinator.async_keep_awake(serial)
 
-        if coordinator.data[serial].raw.get("encrypted"):
-            # An encrypted stream cannot be decrypted as it arrives, only in
-            # one piece afterwards - which is a clip, not a live view: nothing
-            # for fifteen seconds, then fifteen seconds of video, then the end
-            # of the stream. Home Assistant treats that as a broken stream and
-            # starts again, forever. Stills are the honest answer.
+        encrypted = bool(coordinator.data[serial].raw.get("encrypted"))
+        media_key = coordinator.verification_code(serial)
+        if encrypted and media_key is None:
+            # The stream is decrypted as it arrives, but only with a key, and
+            # EZVIZ will not hand every account one over its API.
             _LOGGER.warning(
-                "Video encryption is on for %s, so there is no live video to"
-                " serve - an encrypted stream can only be fetched as a clip."
-                " Switch video encryption off for this device in the EZVIZ app"
-                " to get live video. Snapshots work either way",
+                "Video encryption is on for %s and there is no key for it, so"
+                " there is no live video. Give the integration the code from"
+                " the device's label under Reconfigure, or switch video"
+                " encryption off for it in the EZVIZ app",
                 serial,
             )
-            return web.Response(status=501, text="Video encryption is on")
+            return web.Response(status=501, text="Encrypted, and no key to use")
 
         response = web.StreamResponse(
             headers={"Content-Type": "video/mp2t", "Cache-Control": "no-store"}
@@ -125,8 +124,20 @@ class EzvizStreamView(HomeAssistantView):
 
         def _produce() -> None:
             """Fill the queue from the cloud stream (executor thread)."""
+            # Imported here for the same reason the copier is: a bundled
+            # library that turned out to be missing something should cost the
+            # live video, not the whole integration.
+            from .decrypting_stream import (  # noqa: PLC0415
+                copy_decrypted_cloud_stream,
+            )
+
             try:
-                copy_cloud_stream_to_mpegts(coordinator.client, serial, writer)
+                if encrypted:
+                    copy_decrypted_cloud_stream(
+                        coordinator.client, serial, writer, media_key
+                    )
+                else:
+                    copy_cloud_stream_to_mpegts(coordinator.client, serial, writer)
             except (BrokenPipeError, ConnectionResetError):
                 _LOGGER.debug("Live stream for %s closed by the client", serial)
             except (PyEzvizError, OSError, ValueError, ImportError) as err:

@@ -12,11 +12,7 @@ from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 from homeassistant.components.camera import CameraEntityFeature
-from homeassistant.config_entries import (
-    SOURCE_USER,
-    ConfigEntryState,
-    ConfigSubentryData,
-)
+from homeassistant.config_entries import ConfigEntryState, ConfigSubentryData
 from homeassistant.const import (
     CONF_PASSWORD,
     CONF_USERNAME,
@@ -34,9 +30,9 @@ from custom_components.ezviz_doorbell.const import (
     CONF_DEVICES,
     CONF_SERIAL,
     CONF_VERIFICATION_CODE,
+    CONF_VERIFICATION_CODES,
     CONF_REGION,
     CONF_STATUS_INTERVAL,
-    CONF_VERIFICATION_CODES,
     DEFAULT_REGION,
     DOMAIN,
 )
@@ -412,8 +408,7 @@ async def test_an_encrypted_camera_offers_no_stream_without_a_key(
     """A play button that decodes to noise is worse than no play button.
 
     Home Assistant retries a stream that will not open, over and over, and
-    fills the log doing it - which is what an encrypted camera with no
-    verification code did.
+    fills the log doing it.
     """
     await _setup_with(hass, ezviz_client, {})
 
@@ -421,21 +416,23 @@ async def test_an_encrypted_camera_offers_no_stream_without_a_key(
     assert hass.states.get("camera.front_door").attributes["supported_features"] == 0
 
 
-async def test_a_code_does_not_make_an_encrypted_camera_streamable(
+async def test_a_key_makes_an_encrypted_camera_streamable(
     hass: HomeAssistant, ezviz_client: MagicMock
 ) -> None:
-    """The code decrypts pictures; it cannot make a clip into a live view.
+    """An encrypted stream is decrypted as it arrives, given the key.
 
-    An encrypted stream only decrypts once it has all arrived, so it is a wait
-    followed by a few seconds of video followed by an end - which Home
-    Assistant reads as a broken stream and retries for ever.
+    Configured here through the old single text option, which is kept working
+    so that an upgrade does not drop a code somebody had already set.
     """
     await _setup_with(
         hass, ezviz_client, {CONF_VERIFICATION_CODES: f"{SERIAL}=ABCDEF"}
     )
 
     assert RAW_STATUS["encrypted"] is True
-    assert hass.states.get("camera.front_door").attributes["supported_features"] == 0
+    assert (
+        hass.states.get("camera.front_door").attributes["supported_features"]
+        == CameraEntityFeature.STREAM
+    )
 
 
 async def test_a_camera_without_encryption_streams(
@@ -479,10 +476,10 @@ async def test_only_the_chosen_cameras_are_built(
     assert hass.states.get("camera.front_door") is None
 
 
-async def test_a_code_kept_under_its_camera_is_used(
+async def test_a_code_given_before_is_carried_across(
     hass: HomeAssistant, ezviz_client: MagicMock
 ) -> None:
-    """A code belongs to one camera, so it is stored against one camera."""
+    """Codes were briefly a subentry each; nobody should have to retype one."""
     entry = await _setup_with(
         hass,
         ezviz_client,
@@ -497,38 +494,52 @@ async def test_a_code_kept_under_its_camera_is_used(
         ],
     )
 
-    with patch(
-        "custom_components.ezviz_doorbell.coordinator.decrypt_image",
-        return_value=b"plain",
-    ) as decrypt:
-        entry.runtime_data._decrypt(SERIAL, b"hikencodepicture and more")
-
-    decrypt.assert_called_once_with(b"hikencodepicture and more", "ABCDEF")
+    assert entry.data[CONF_VERIFICATION_CODES] == {SERIAL: "ABCDEF"}
+    assert not entry.subentries, "the subentry should be gone once it has moved"
+    assert entry.runtime_data.verification_code(SERIAL) == "ABCDEF"
 
 
-async def test_adding_a_code_takes_effect_without_a_restart(
+async def test_a_code_can_be_given_without_a_restart(
     hass: HomeAssistant, ezviz_client: MagicMock
 ) -> None:
-    """Adding one should reload the account, and nothing else should."""
+    """Reconfigure holds the codes, and adding one takes effect at once."""
     entry = await _setup_with(hass, ezviz_client, {})
     assert entry.runtime_data.verification_code(SERIAL) is None
 
     with _mocked_cloud(ezviz_client):
-        result = await hass.config_entries.subentries.async_init(
-            (entry.entry_id, CAMERA_SUBENTRY), context={"source": SOURCE_USER}
-        )
-        assert result["type"] is FlowResultType.FORM
+        result = await entry.start_reconfigure_flow(hass)
+        assert result["step_id"] == "reconfigure"
 
-        result = await hass.config_entries.subentries.async_configure(
-            result["flow_id"],
-            {CONF_SERIAL: SERIAL, CONF_VERIFICATION_CODE: " ABCDEF "},
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {SERIAL: " ABCDEF "}
         )
         await hass.async_block_till_done()
 
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    subentry = next(iter(entry.subentries.values()))
-    assert subentry.data == {CONF_SERIAL: SERIAL, CONF_VERIFICATION_CODE: "ABCDEF"}
-    assert subentry.title == "Front door"
-
-    # The reload happened, so the camera can be decrypted from now on.
+    assert result["type"] is FlowResultType.ABORT
+    assert entry.data[CONF_VERIFICATION_CODES] == {SERIAL: "ABCDEF"}
+    # The account reloaded, so the code is in use from now on.
     assert entry.runtime_data.verification_code(SERIAL) == "ABCDEF"
+
+
+async def test_only_doorbells_are_built(
+    hass: HomeAssistant, ezviz_client: MagicMock
+) -> None:
+    """An account full of cameras should still only bring in the doorbell."""
+    other = {
+        **PAGELIST_DEVICE,
+        "deviceInfos": {
+            **PAGELIST_DEVICE["deviceInfos"],
+            "deviceSerial": "CAMERA1",
+            "name": "Garden",
+            "deviceCategory": "IPC",
+        },
+    }
+    ezviz_client.get_device_infos.return_value = {
+        SERIAL: PAGELIST_DEVICE,
+        "CAMERA1": other,
+    }
+
+    entry = await _setup_with(hass, ezviz_client, {})
+
+    assert set(entry.runtime_data.data) == {SERIAL}
+    assert hass.states.get("camera.front_door") is not None

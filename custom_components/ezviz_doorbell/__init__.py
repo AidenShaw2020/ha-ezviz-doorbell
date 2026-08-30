@@ -16,7 +16,14 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 
-from .const import CONF_STREAM_TOKEN, DOMAIN
+from .const import (
+    CAMERA_SUBENTRY,
+    CONF_SERIAL,
+    CONF_STREAM_TOKEN,
+    CONF_VERIFICATION_CODE,
+    CONF_VERIFICATION_CODES,
+    DOMAIN,
+)
 from .coordinator import (
     EzvizDoorbellCoordinator,
     config_signature,
@@ -50,6 +57,7 @@ async def async_setup_entry(
     report_library(cloud_stream is not None)
 
     _ensure_stream_token(hass, entry)
+    _migrate_codes_out_of_subentries(hass, entry)
     _register_stream_view(hass)
 
     coordinator = EzvizDoorbellCoordinator(hass, entry)
@@ -126,6 +134,38 @@ def _ensure_stream_token(hass: HomeAssistant, entry: ConfigEntry) -> None:
         entry,
         data={**entry.data, CONF_STREAM_TOKEN: secrets.token_urlsafe(16)},
     )
+
+
+def _migrate_codes_out_of_subentries(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> None:
+    """Move verification codes into the account's data.
+
+    They were briefly a subentry per camera, which put them in the list of
+    things this integration had set up - next to the cameras themselves, where
+    a piece of configuration has no business being. Anyone who added one there
+    keeps it without having to type it again.
+    """
+    subentries = [
+        subentry
+        for subentry in entry.subentries.values()
+        if subentry.subentry_type == CAMERA_SUBENTRY
+    ]
+    if not subentries:
+        return
+
+    codes = dict(entry.data.get(CONF_VERIFICATION_CODES) or {})
+    for subentry in subentries:
+        serial = subentry.data.get(CONF_SERIAL)
+        code = subentry.data.get(CONF_VERIFICATION_CODE)
+        if serial and code:
+            codes[str(serial)] = str(code)
+
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_VERIFICATION_CODES: codes}
+    )
+    for subentry in subentries:
+        hass.config_entries.async_remove_subentry(entry, subentry.subentry_id)
 
 
 def _register_stream_view(hass: HomeAssistant) -> None:

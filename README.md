@@ -113,10 +113,12 @@ because the session is stored and refreshed from then on. Needs Home Assistant
   the cloud and wakes the camera, so short intervals cost battery.
 - **Extra alert codes that mean a ring / motion** — comma separated, only needed
   for a model whose codes are not recognised yet.
-- **Cameras to include** — an account often holds cameras that have nothing to
-  do with a doorbell; untick them and no entities are built for them.
-Verification codes are not here — they belong to one camera each, so they are
-added under the account as **Add a camera's verification code**. See below.
+- **Cameras to include** — only devices EZVIZ files as a doorbell are used
+  unless something is picked here; tick a camera to bring it in as well. (If
+  nothing on the account calls itself a doorbell, everything is used and the log
+  says so.)
+Verification codes are not here — they are part of the account's configuration,
+under **⋮ → Reconfigure**. See below.
 
 ### It runs alongside the built-in EZVIZ integration
 
@@ -217,26 +219,27 @@ stream is opened here, remuxed to MPEG-TS with the FFmpeg that Home Assistant
 already ships, and served back to the stream component as a URL of Home
 Assistant's own. From the dashboard it is simply a camera.
 
-### Video encryption decides whether there is live video at all
+### Video encryption, and the key that gets past it
 
-**Live video needs video encryption switched off** for that device in the EZVIZ
-app. There is no way around it: an encrypted cloud stream can only be decrypted
-once all of it has arrived, which makes it a clip — a wait, a few seconds of
-video, then the end of the stream, which Home Assistant reads as a stream that
-broke and restarts for ever. So a camera with encryption on is offered as
-stills rather than live video, and says so once in the log.
+An encrypted camera streams too. Only the first 4 KB of each video frame is
+encrypted, so the stream is decrypted as it arrives rather than fetched, waited
+for and decrypted in one lump — which is what the EZVIZ app does, and why it can
+play an encrypted camera live when a "download the clip first" approach cannot.
 
-Image encryption is a separate setting and can stay on either way; snapshots
-are decrypted before they reach Home Assistant.
+What it needs is the key. EZVIZ hands most accounts the device key over its API
+and this integration asks for it, but not every account gets it — a shared
+device, or one EZVIZ answers with `好友不存在` / `重复申请分享`, both of which mean
+"no". The key is then the code printed on the device's own label, and it goes in
+under **Settings → Devices & services → EZVIZ Doorbell → ⋮ → Reconfigure**, one
+box per camera, named by the serial that is printed on the same label. It takes
+effect immediately, and it decrypts that camera's snapshots as well as its
+video.
 
-To decrypt those snapshots the integration needs the device key. EZVIZ hands
-most accounts it over its API and this integration asks for it — but not every
-account gets it (a shared device, or one EZVIZ answers with `好友不存在` /
-`重复申请分享`, both of which mean "no"). The key is then the code printed on the
-device's own label, and it goes under the camera it belongs to: **Settings →
-Devices & services → EZVIZ Doorbell → Add a camera's verification code**, pick
-the camera, type the letters. It takes effect immediately. It has no bearing on
-live video — that is the encryption setting above, and only that.
+With encryption on and no key, no stream is offered at all and the camera shows
+stills: a play button that can only fail makes Home Assistant retry it endlessly
+and fills the log. The other way out is switching video encryption off for that
+device in the EZVIZ app, which needs no key at all. Image encryption is a
+separate setting and can stay on either way.
 
 One more thing worth knowing: **a cloud stream is a cloud stream.** It costs
 bandwidth at both ends and takes longer to start than RTSP would. Switch *Offer

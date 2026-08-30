@@ -22,23 +22,25 @@ CONF_LIVE_STREAM: Final = "live_stream"
 CONF_RING_CODES: Final = "ring_codes"
 CONF_MOTION_CODES: Final = "motion_codes"
 CONF_DEVICES: Final = "devices"
-# The old single text field of SERIAL=CODE pairs. Codes now live in a subentry
-# per camera; this is still read so that nobody's setting quietly disappears.
+# The verification codes, as serial to code. In the account's own data, where
+# Reconfigure edits them; also the name of the old single text option, which
+# is still read so that nobody's setting quietly disappears.
 CONF_VERIFICATION_CODES: Final = "verification_codes"
 
-# One subentry per camera that needs a key, which is what puts the code under
-# the camera it belongs to rather than in a list somewhere else.
+# Codes used to live in a subentry per camera. They are part of the account's
+# own data now, edited through Reconfigure, and these are still read so that an
+# upgrade carries across a code somebody had already given.
 CAMERA_SUBENTRY: Final = "camera"
 CONF_SERIAL: Final = "serial"
 CONF_VERIFICATION_CODE: Final = "verification_code"
 
+# What EZVIZ calls a doorbell. Anything else on the account is a camera this
+# integration has no reason to build forty entities for.
+DOORBELL_CATEGORIES: Final[frozenset[str]] = frozenset({"BDoorBell", "CatEye"})
+
 DEFAULT_POLL_INTERVAL: Final = 5
 DEFAULT_STATUS_INTERVAL: Final = 60
 DEFAULT_SNAPSHOT_INTERVAL: Final = 3
-
-# An encrypted cloud stream cannot be decrypted as it arrives, only in one
-# piece afterwards, so for those devices a "stream" is really a short clip.
-ENCRYPTED_CLIP_SECONDS: Final = 15.0
 
 EVENT_RING: Final = "ring"
 EVENT_MOTION: Final = "motion"

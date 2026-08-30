@@ -28,6 +28,10 @@
           "password": "Heslo",
           "region": "Adresa API regionu"
         }
+      },
+      "reconfigure": {
+        "title": "Ověřovací kódy",
+        "description": "Kamera se zapnutým šifrováním potřebuje klíč, jinak z ní nejdou přečíst snímky. Většině účtů ho EZVIZ vydá přes API a integrace si o něj řekne sama; když ho nevydá, cestou je kód vytištěný na štítku zařízení. Jedno pole na kameru, pojmenované sériovým číslem, které je na tomtéž štítku: {cameras}. Prázdné pole znamená ptát se dál API."
       }
     },
     "error": {
@@ -42,7 +46,9 @@
     },
     "abort": {
       "already_configured": "Tenhle účet EZVIZ už je nastavený.",
-      "reauth_successful": "Přihlášení obnoveno."
+      "reauth_successful": "Přihlášení obnoveno.",
+      "reconfigure_successful": "Uloženo.",
+      "no_cameras": "Na tomhle účtu zatím nebyla nalezena žádná kamera."
     }
   },
   "options": {
@@ -63,39 +69,8 @@
           "snapshot_interval": "Každý snímek je cesta do cloudu a probuzení kamery, takže krátké intervaly stojí baterii.",
           "ring_codes": "Oddělené čárkou. Potřeba jen u modelu, jehož kódy zatím nikdo nezmapoval - log u každé nerozpoznané události kód vypíše.",
           "motion_codes": "Oddělené čárkou.",
-          "devices": "Odškrtni, co není zvonek, ať se pro to nevyrábějí entity."
+          "devices": "Bez výběru se použijí jen zvonky. Zaškrtnutím přibereš i kameru."
         }
-      }
-    }
-  },
-  "config_subentries": {
-    "camera": {
-      "entry_type": "Ověřovací kód kamery",
-      "initiate_flow": {
-        "user": "Přidat ověřovací kód kamery",
-        "reconfigure": "Změnit ověřovací kód této kamery"
-      },
-      "step": {
-        "user": {
-          "title": "Ověřovací kód",
-          "description": "Klíč k zašifrované kameře vydá EZVIZ většině účtů přes API a integrace si o něj řekne sama. Když ho nevydá, zbývá kód vytištěný na štítku zařízení - ten dešifruje snímky i video.",
-          "data": {
-            "serial": "Kamera",
-            "verification_code": "Ověřovací kód"
-          },
-          "data_description": {
-            "verification_code": "Písmena ze štítku, obvykle šest."
-          }
-        },
-        "reconfigure": {
-          "title": "Ověřovací kód",
-          "data": {
-            "verification_code": "Ověřovací kód"
-          }
-        }
-      },
-      "abort": {
-        "no_cameras": "Každá kamera na tomhle účtu už kód má. Změň ho u té konkrétní."
       }
     }
   },
