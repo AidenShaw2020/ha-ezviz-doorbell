@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+from homeassistant.components.camera import CameraEntityFeature
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import (
     CONF_PASSWORD,
@@ -23,8 +24,10 @@ import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.ezviz_doorbell.const import (
+    CONF_DEVICES,
     CONF_REGION,
     CONF_STATUS_INTERVAL,
+    CONF_VERIFICATION_CODES,
     DEFAULT_REGION,
     DOMAIN,
 )
@@ -347,3 +350,90 @@ async def test_it_loads_against_the_older_library(
             hass.states.get("event.front_door_doorbell").attributes["event_type"]
             == "ring"
         )
+
+
+async def _setup_with(
+    hass: HomeAssistant, ezviz_client: MagicMock, options: dict
+) -> MockConfigEntry:
+    """Set the integration up with particular options."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="cloud@example.invalid",
+        data={
+            CONF_USERNAME: "cloud@example.invalid",
+            CONF_PASSWORD: "secret",
+            CONF_REGION: DEFAULT_REGION,
+        },
+        options=options,
+    )
+    entry.add_to_hass(hass)
+
+    camera = MagicMock()
+    camera.return_value.status.return_value = RAW_STATUS
+    with (
+        patch(
+            "custom_components.ezviz_doorbell.coordinator.EzvizClient",
+            return_value=ezviz_client,
+        ),
+        patch("custom_components.ezviz_doorbell.coordinator.EzvizCamera", camera),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    return entry
+
+
+async def test_an_encrypted_camera_offers_no_stream_without_a_key(
+    hass: HomeAssistant, ezviz_client: MagicMock
+) -> None:
+    """A play button that decodes to noise is worse than no play button.
+
+    Home Assistant retries a stream that will not open, over and over, and
+    fills the log doing it - which is what an encrypted camera with no
+    verification code did.
+    """
+    await _setup_with(hass, ezviz_client, {})
+
+    assert RAW_STATUS["encrypted"] is True
+    assert hass.states.get("camera.front_door").attributes["supported_features"] == 0
+
+
+async def test_a_verification_code_brings_the_stream_back(
+    hass: HomeAssistant, ezviz_client: MagicMock
+) -> None:
+    """With the code from the device label there is something to decode with."""
+    await _setup_with(
+        hass, ezviz_client, {CONF_VERIFICATION_CODES: f"{SERIAL}=ABCDEF"}
+    )
+
+    assert (
+        hass.states.get("camera.front_door").attributes["supported_features"]
+        == CameraEntityFeature.STREAM
+    )
+
+
+async def test_a_configured_code_is_used_before_asking_the_cloud(
+    hass: HomeAssistant, ezviz_client: MagicMock
+) -> None:
+    """EZVIZ will not hand every account the key, so the code comes first."""
+    entry = await _setup_with(
+        hass, ezviz_client, {CONF_VERIFICATION_CODES: f"{SERIAL}=ABCDEF"}
+    )
+    coordinator = entry.runtime_data
+
+    with patch(
+        "custom_components.ezviz_doorbell.coordinator.decrypt_image",
+        return_value=b"plain",
+    ) as decrypt:
+        assert coordinator._decrypt(SERIAL, b"hikencodepicture and more") == b"plain"
+
+    decrypt.assert_called_once_with(b"hikencodepicture and more", "ABCDEF")
+    ezviz_client.get_cam_key.assert_not_called()
+
+
+async def test_only_the_chosen_cameras_are_built(
+    hass: HomeAssistant, ezviz_client: MagicMock
+) -> None:
+    """An account can hold cameras that have nothing to do with a doorbell."""
+    await _setup_with(hass, ezviz_client, {CONF_DEVICES: ["SOMETHINGELSE"]})
+
+    assert hass.states.get("camera.front_door") is None

@@ -32,12 +32,14 @@ from homeassistant.util import dt as dt_util
 from .const import (
     BURST_INTERVAL,
     BURST_SECONDS,
+    CONF_DEVICES,
     CONF_MOTION_CODES,
     CONF_POLL_INTERVAL,
     CONF_REGION,
     CONF_RING_CODES,
     CONF_STATUS_INTERVAL,
     CONF_TOKEN,
+    CONF_VERIFICATION_CODES,
     DEFAULT_POLL_INTERVAL,
     DEFAULT_REGION,
     DEFAULT_STATUS_INTERVAL,
@@ -194,6 +196,15 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
         self._extra_ring = _codes(options.get(CONF_RING_CODES))
         self._extra_motion = _codes(options.get(CONF_MOTION_CODES))
 
+        # Empty means every device on the account.
+        self._only = {str(serial) for serial in options.get(CONF_DEVICES) or []}
+        # The code from the device label. EZVIZ will normally hand this account
+        # the same key over the API, but not for every device and not for every
+        # account, and without it an encrypted picture or stream is noise.
+        self._verification_codes = _verification_codes(
+            options.get(CONF_VERIFICATION_CODES)
+        )
+
     # ------------------------------------------------------------------
     # Session
     # ------------------------------------------------------------------
@@ -257,6 +268,8 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
 
         result: dict[str, dict[str, Any]] = {}
         for serial, info in (devices or {}).items():
+            if self._only and serial not in self._only:
+                continue
             try:
                 camera = EzvizCamera(self.client, serial, info)
                 with self._api_lock:
@@ -651,15 +664,18 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
             return data
 
         assert self.client is not None
+        key = self._verification_codes.get(serial)
         try:
-            with self._api_lock:
-                key = self.client.get_cam_key(serial)
+            if key is None:
+                with self._api_lock:
+                    key = self.client.get_cam_key(serial)
             return decrypt_image(data, key)
         except (PyEzvizError, OSError) as err:
             _LOGGER.warning(
-                "Could not decrypt a picture from %s (%s). Turn image"
-                " encryption off in the EZVIZ app, or check that this account"
-                " may read the device's key",
+                "Could not decrypt a picture from %s (%s). Put the"
+                " device's verification code - the letters on its label - into"
+                " the integration's options, or turn image encryption off in"
+                " the EZVIZ app",
                 serial,
                 err,
             )
@@ -758,6 +774,10 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
             await self.async_request_refresh()
         return result
 
+    def verification_code(self, serial: str) -> str | None:
+        """Return the verification code configured for one device."""
+        return self._verification_codes.get(serial)
+
     async def async_keep_awake(self, serial: str) -> bool:
         """Ask the cloud to keep a battery camera awake a while longer."""
         try:
@@ -847,6 +867,21 @@ def _int(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return -1
+
+
+def _verification_codes(value: Any) -> dict[str, str]:
+    """Return the SERIAL=CODE pairs configured for encrypted devices.
+
+    One line of text, because an options flow has no way to ask for a value per
+    device - and most accounts have one doorbell anyway.
+    """
+    codes: dict[str, str] = {}
+    separators = str(value or "").replace(";", ",").replace(chr(10), ",")
+    for pair in separators.split(","):
+        serial, marker, code = pair.partition("=")
+        if marker and serial.strip() and code.strip():
+            codes[serial.strip()] = code.strip()
+    return codes
 
 
 def _codes(values: Any) -> set[int]:

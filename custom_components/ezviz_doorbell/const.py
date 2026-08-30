@@ -21,6 +21,8 @@ CONF_SNAPSHOT_INTERVAL: Final = "snapshot_interval"
 CONF_LIVE_STREAM: Final = "live_stream"
 CONF_RING_CODES: Final = "ring_codes"
 CONF_MOTION_CODES: Final = "motion_codes"
+CONF_DEVICES: Final = "devices"
+CONF_VERIFICATION_CODES: Final = "verification_codes"
 
 DEFAULT_POLL_INTERVAL: Final = 5
 DEFAULT_STATUS_INTERVAL: Final = 60

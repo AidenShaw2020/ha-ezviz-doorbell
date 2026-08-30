@@ -31,6 +31,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv
 
 from .const import (
+    CONF_DEVICES,
     CONF_LIVE_STREAM,
     CONF_MOTION_CODES,
     CONF_POLL_INTERVAL,
@@ -39,6 +40,7 @@ from .const import (
     CONF_SNAPSHOT_INTERVAL,
     CONF_STATUS_INTERVAL,
     CONF_TOKEN,
+    CONF_VERIFICATION_CODES,
     DEFAULT_POLL_INTERVAL,
     DEFAULT_REGION,
     DEFAULT_SNAPSHOT_INTERVAL,
@@ -304,6 +306,7 @@ class EzvizDoorbellOptionsFlow(OptionsFlow):
         options = self.config_entry.options
         schema = vol.Schema(
             {
+                **self._devices_field(options),
                 vol.Required(
                     CONF_POLL_INTERVAL,
                     default=options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
@@ -332,6 +335,33 @@ class EzvizDoorbellOptionsFlow(OptionsFlow):
                     CONF_MOTION_CODES,
                     default=options.get(CONF_MOTION_CODES, ""),
                 ): cv.string,
+                vol.Optional(
+                    CONF_VERIFICATION_CODES,
+                    default=options.get(CONF_VERIFICATION_CODES, ""),
+                ): cv.string,
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
+
+    def _devices_field(self, options: Mapping[str, Any]) -> dict[Any, Any]:
+        """Return a tick box per camera, or nothing if none are known yet.
+
+        An account can hold cameras that have nothing to do with a doorbell,
+        and there is no reason to build forty entities for each of them.
+        """
+        coordinator = getattr(self.config_entry, "runtime_data", None)
+        known = getattr(coordinator, "data", None) or {}
+        if not known:
+            return {}
+
+        choices = {
+            serial: f"{device.name} ({serial})" for serial, device in known.items()
+        }
+        chosen = [
+            serial for serial in options.get(CONF_DEVICES, []) if serial in choices
+        ]
+        return {
+            vol.Optional(
+                CONF_DEVICES, default=chosen or list(choices)
+            ): cv.multi_select(choices)
+        }

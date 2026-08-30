@@ -113,6 +113,12 @@ because the session is stored and refreshed from then on. Needs Home Assistant
   the cloud and wakes the camera, so short intervals cost battery.
 - **Extra alert codes that mean a ring / motion** — comma separated, only needed
   for a model whose codes are not recognised yet.
+- **Cameras to include** — an account often holds cameras that have nothing to
+  do with a doorbell; untick them and no entities are built for them.
+- **Verification codes** — `SERIAL=CODE`, comma separated, where the code is the
+  letters printed on the device label. Only needed for a device with encryption
+  switched on, and only when EZVIZ will not hand this account the key over its
+  API. See below.
 
 ### It runs alongside the built-in EZVIZ integration
 
@@ -213,16 +219,31 @@ stream is opened here, remuxed to MPEG-TS with the FFmpeg that Home Assistant
 already ships, and served back to the stream component as a URL of Home
 Assistant's own. From the dashboard it is simply a camera.
 
-Two things are worth knowing:
+### Video encryption is what usually stands in the way
 
-- **Video encryption limits it to a clip.** An encrypted cloud stream has to be
-  collected in full before it can be decrypted, so with encryption on the stream
-  is a 15 second clip rather than a continuous feed. Switch *video* encryption
-  off in the EZVIZ app for a real live view. Image encryption is separate and
-  can stay on — snapshots are decrypted either way.
-- **A cloud stream is a cloud stream.** It costs bandwidth at both ends and
-  takes longer to start than RTSP would. Switch *Offer live video* off to drop
-  it and keep the stills.
+An encrypted stream is noise without the key, and there are two ways to get one.
+
+**The good way: switch video encryption off** for the doorbell in the EZVIZ app.
+The stream is then continuous, and starts as quickly as a cloud stream can.
+Image encryption is a separate setting and can stay on — snapshots are decrypted
+either way.
+
+**The other way: give the integration the key.** EZVIZ hands most accounts the
+device key over its API, and this integration asks for it — but not every
+account gets it (a shared device, or one EZVIZ answers with
+`好友不存在` / `重复申请分享`, both of which mean "no"). Put `SERIAL=CODE` into
+**Verification codes** in the options, with the letters from the device's label,
+and it stops asking. An encrypted stream still has to be collected in full
+before it can be decrypted, so it arrives as a 15 second clip rather than a
+continuous feed — usable, but the first way is better.
+
+With encryption on and no code configured, no stream is offered at all: the
+camera shows stills instead. A play button that can only fail makes Home
+Assistant retry it endlessly and fills the log, which helps nobody.
+
+One more thing worth knowing: **a cloud stream is a cloud stream.** It costs
+bandwidth at both ends and takes longer to start than RTSP would. Switch *Offer
+live video* off to drop it and keep the stills.
 
 The stream URL carries a token generated for the config entry, because FFmpeg
 opens it and has no way to present a Home Assistant login.

@@ -101,6 +101,19 @@ class EzvizStreamView(HomeAssistantView):
         await coordinator.async_keep_awake(serial)
 
         encrypted = bool(coordinator.data[serial].raw.get("encrypted"))
+        media_key = coordinator.verification_code(serial)
+        if encrypted and media_key is None:
+            # Without the key the stream decodes to noise, and EZVIZ will not
+            # always hand this account the key over the API.
+            _LOGGER.warning(
+                "Video encryption is on for %s and no verification code is"
+                " configured for it, so there is no live video. Switch video"
+                " encryption off in the EZVIZ app, or put the code from the"
+                " device's label into the integration's options",
+                serial,
+            )
+            return web.Response(status=501, text="Encrypted, and no key to use")
+
         if encrypted:
             _LOGGER.info(
                 "Video encryption is on for %s, so the stream is a %.0fs clip."
@@ -126,6 +139,7 @@ class EzvizStreamView(HomeAssistantView):
                     serial,
                     writer,
                     decrypt_video=encrypted,
+                    media_key=media_key,
                     duration_seconds=ENCRYPTED_CLIP_SECONDS if encrypted else None,
                 )
             except (BrokenPipeError, ConnectionResetError):

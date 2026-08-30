@@ -55,13 +55,17 @@
           "live_stream": "Offer live video",
           "snapshot_interval": "Seconds between still pictures",
           "ring_codes": "Extra alert codes that mean a ring",
-          "motion_codes": "Extra alert codes that mean motion"
+          "motion_codes": "Extra alert codes that mean motion",
+          "devices": "Cameras to include",
+          "verification_codes": "Verification codes"
         },
         "data_description": {
           "poll_interval": "A doorbell press only ever arrives by polling, so this is its worst case delay. Any push drops the poll to one a second for half a minute, which is where a press usually lands. 0 switches polling off.",
           "snapshot_interval": "Each picture is a round trip to the cloud and wakes the camera, so short intervals cost battery.",
           "ring_codes": "Comma separated. Only needed for a model whose codes are not recognised - the log names the code next to every unrecognised event.",
-          "motion_codes": "Comma separated."
+          "motion_codes": "Comma separated.",
+          "devices": "Untick anything that is not a doorbell to keep its entities out of Home Assistant.",
+          "verification_codes": "Only needed for a device with encryption switched on: SERIAL=CODE, comma separated, where CODE is the letters printed on the device label. EZVIZ hands most accounts the key over the API, and this is what to do when it does not."
         }
       }
     }

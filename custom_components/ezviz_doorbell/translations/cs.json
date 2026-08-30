@@ -55,13 +55,17 @@
           "live_stream": "Nabízet živé video",
           "snapshot_interval": "Sekundy mezi snímky",
           "ring_codes": "Další kódy, které znamenají zvonění",
-          "motion_codes": "Další kódy, které znamenají pohyb"
+          "motion_codes": "Další kódy, které znamenají pohyb",
+          "devices": "Zahrnuté kamery",
+          "verification_codes": "Ověřovací kódy"
         },
         "data_description": {
           "poll_interval": "Stisk zvonku přijde jedině dotazováním, takže tohle je jeho nejhorší možné zpoždění. Po každém pushi se dotazování na půl minuty zrychlí na jednou za sekundu, což je přesně doba, kdy stisk obvykle přijde. 0 dotazování vypne.",
           "snapshot_interval": "Každý snímek je cesta do cloudu a probuzení kamery, takže krátké intervaly stojí baterii.",
           "ring_codes": "Oddělené čárkou. Potřeba jen u modelu, jehož kódy zatím nikdo nezmapoval - log u každé nerozpoznané události kód vypíše.",
-          "motion_codes": "Oddělené čárkou."
+          "motion_codes": "Oddělené čárkou.",
+          "devices": "Odškrtni, co není zvonek, ať se pro to nevyrábějí entity.",
+          "verification_codes": "Potřeba jen u zařízení se zapnutým šifrováním: SERIAL=KÓD, oddělené čárkou, kde KÓD jsou písmena ze štítku zařízení. Většině účtů vydá EZVIZ klíč přes API sám; tohle je na případy, kdy ne."
         }
       }
     }

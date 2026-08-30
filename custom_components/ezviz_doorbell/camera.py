@@ -61,12 +61,42 @@ class EzvizDoorbellCamera(EzvizDoorbellEntity, Camera):
         self._snapshot_interval = float(
             options.get(CONF_SNAPSHOT_INTERVAL, DEFAULT_SNAPSHOT_INTERVAL)
         )
-        # Advertising a stream the installed pyezvizapi cannot open would put
-        # a play button on the card that only ever fails.
-        if self._live_stream and coordinator.cloud_stream is not None:
+        # A play button that can only ever fail is worse than no play
+        # button: Home Assistant retries a broken stream over and over, and
+        # fills the log doing it. So it is only offered when there is really
+        # something to play.
+        self._can_stream = (
+            self._live_stream
+            and coordinator.cloud_stream is not None
+            and self._stream_is_decodable(coordinator, serial)
+        )
+        if self._can_stream:
             self._attr_supported_features = CameraEntityFeature.STREAM
         self._capture_lock = asyncio.Lock()
         self._capture_refused = False
+
+    @staticmethod
+    def _stream_is_decodable(
+        coordinator: EzvizDoorbellCoordinator, serial: str
+    ) -> bool:
+        """Return whether this camera's video can actually be played.
+
+        An encrypted stream needs the device's verification code, which EZVIZ
+        does not hand every account over the API - so without one configured
+        there is nothing to decode it with.
+        """
+        if not coordinator.data[serial].raw.get("encrypted"):
+            return True
+        if coordinator.verification_code(serial) is not None:
+            return True
+        _LOGGER.info(
+            "%s has video encryption on and no verification code configured,"
+            " so it is offered as stills rather than live video. Switch video"
+            " encryption off in the EZVIZ app, or put the code from the"
+            " device's label into the integration's options",
+            serial,
+        )
+        return False
 
     @property
     def frame_interval(self) -> float:
@@ -79,7 +109,7 @@ class EzvizDoorbellCamera(EzvizDoorbellEntity, Camera):
 
     async def stream_source(self) -> str | None:
         """Return the URL the stream component should open."""
-        if not self._live_stream or self.coordinator.cloud_stream is None:
+        if not self._can_stream:
             return None
         token = self.coordinator.config_entry.data.get(CONF_STREAM_TOKEN)
         if not token:
