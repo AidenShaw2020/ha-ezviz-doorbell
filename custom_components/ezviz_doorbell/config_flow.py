@@ -210,8 +210,14 @@ class EzvizDoorbellConfigFlow(ConfigFlow, domain=DOMAIN):
                 self._account[CONF_PASSWORD],
                 self._account.get(CONF_REGION, DEFAULT_REGION),
             )
-        self._client.login(sms_code=code)
-        return self._client.export_token()
+        # login() hands the session back in every version of the library, while
+        # export_token() only exists in the newer ones - and reaching for it on
+        # an older one turned a login that had just succeeded into an unhandled
+        # AttributeError, which is a miserable way to lose a two factor code.
+        token = self._client.login(sms_code=code)
+        if not token and hasattr(self._client, "export_token"):
+            token = self._client.export_token()
+        return dict(token or {})
 
     async def _async_login(
         self, errors: dict[str, str], code: int | None = None

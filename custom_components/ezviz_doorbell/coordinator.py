@@ -214,9 +214,12 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
     def _login(self) -> tuple[EzvizClient, dict[str, Any]]:
         """Log in, reusing the stored session when there is one."""
         client = self._create_client()
-        client.login()
-        token = client.export_token() if hasattr(client, "export_token") else {}
-        return client, token
+        # login() returns the session in every version of the library;
+        # export_token() only exists in the newer ones.
+        token = client.login()
+        if not token and hasattr(client, "export_token"):
+            token = client.export_token()
+        return client, dict(token or {})
 
     async def async_login(self) -> None:
         """Log in and remember the refreshed session.

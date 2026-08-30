@@ -64,8 +64,10 @@ async def async_unload_entry(
 ) -> bool:
     """Tear down one EZVIZ account."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unloaded:
-        await entry.runtime_data.async_unload()
+    # Setup may not have got as far as the coordinator, and Home Assistant
+    # unloads the entry either way.
+    if unloaded and (coordinator := getattr(entry, "runtime_data", None)):
+        await coordinator.async_unload()
     return unloaded
 
 

@@ -38,6 +38,7 @@ TOKEN = {"session_id": "session", "api_url": "api"}
 def client() -> MagicMock:
     """Return the EZVIZ client the flow will build."""
     client = MagicMock()
+    client.login.return_value = TOKEN
     client.export_token.return_value = TOKEN
     return client
 
@@ -81,7 +82,7 @@ async def test_two_factor(hass: HomeAssistant, client: MagicMock) -> None:
     The cloud binds a code to the terminal that asked for it, so a second
     client would be handed a code that was never meant for it.
     """
-    client.login.side_effect = [EzvizAuthVerificationCode("code required"), None]
+    client.login.side_effect = [EzvizAuthVerificationCode("code required"), TOKEN]
 
     flow_id = await _start(hass)
     with patch(
@@ -133,7 +134,7 @@ async def test_a_new_code_can_be_asked_for(
     hass: HomeAssistant, client: MagicMock
 ) -> None:
     """A code expires, and starting the whole flow again to get one is silly."""
-    client.login.side_effect = [EzvizAuthVerificationCode("code required"), None]
+    client.login.side_effect = [EzvizAuthVerificationCode("code required"), TOKEN]
 
     flow_id = await _start(hass)
     with patch(
@@ -203,3 +204,24 @@ async def test_an_unexpected_failure_is_logged(
     assert result["errors"] == {"base": "unknown"}
     assert "Unexpected error logging in to EZVIZ" in caplog.text
     assert "KeyError" in caplog.text
+
+
+async def test_a_library_without_export_token(hass: HomeAssistant) -> None:
+    """The older pyezvizapi has no export_token, and login() is enough.
+
+    Reaching for it there turned a login that had just succeeded into an
+    unhandled AttributeError - the flow died, the log said nothing, and the two
+    factor code that had just been spent was gone.
+    """
+    old_client = MagicMock(spec=["login", "send_mfa_code"])
+    old_client.login.return_value = TOKEN
+
+    flow_id = await _start(hass)
+    with patch(
+        "custom_components.ezviz_doorbell.config_flow.EzvizClient",
+        return_value=old_client,
+    ):
+        result = await hass.config_entries.flow.async_configure(flow_id, ACCOUNT)
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_TOKEN] == TOKEN
