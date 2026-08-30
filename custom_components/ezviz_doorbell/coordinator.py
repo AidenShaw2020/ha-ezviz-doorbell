@@ -55,6 +55,7 @@ from .const import (
     POLL_SUBTYPES,
     PUSH_ALERT_TYPES,
     RING_PATTERN,
+    SETTLE_SECONDS,
     signal_event,
 )
 from .helpers import first_image_url
@@ -198,6 +199,9 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
         self._sensitivity_broken: set[str] = set()
         self._warned_about_categories = False
         self._keyless: set[str] = set()
+        # Nothing that arrives in the first moments of listening is news: the
+        # cloud hands over what it has been holding as soon as it is asked.
+        self._settle_until = 0.0
 
         poll_interval = options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
         # Wide enough to cover a poll arriving after a push for the same event,
@@ -401,6 +405,7 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
 
     async def async_start_listening(self) -> None:
         """Open the push connection and start polling for messages."""
+        self._settle_until = time.monotonic() + SETTLE_SECONDS
         await self.hass.async_add_executor_job(self._connect_push)
         self._poll_task = self.config_entry.async_create_background_task(
             self.hass, self._message_poll(), f"{DOMAIN}_message_poll"
@@ -472,6 +477,14 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
         serial = ext.get("device_serial")
 
         _LOGGER.debug("Push received: %s", msg)
+
+        if self._settling():
+            # EZVIZ delivers what it was holding as soon as the connection
+            # opens, so the first thing heard after a restart or a reload is
+            # usually the last thing that happened - hours ago, and already
+            # dealt with.
+            _LOGGER.debug("Ignoring a push that arrived while starting up")
+            return
 
         # A ring usually comes by polling rather than push. Motion does come
         # over push, and usually just before the button is pressed, so treat
@@ -554,8 +567,10 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
                 continue
             self._seen_messages.add(msg_id)
             # The first sweep only records what already exists, so history is
-            # not replayed as fresh events on startup.
-            if self._poll_primed:
+            # not replayed as fresh events on startup - and neither is anything
+            # that turns up in the moments after, which the first sweep misses
+            # when the cloud answers it with an empty list.
+            if self._poll_primed and not self._settling():
                 await self._async_handle_polled(item)
 
         if not self._poll_primed:
@@ -614,6 +629,10 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
     # ------------------------------------------------------------------
     # Classification
     # ------------------------------------------------------------------
+
+    def _settling(self) -> bool:
+        """Return whether listening only just started."""
+        return time.monotonic() < self._settle_until
 
     def classify(
         self, code: int, text: str, calling: bool, source: str

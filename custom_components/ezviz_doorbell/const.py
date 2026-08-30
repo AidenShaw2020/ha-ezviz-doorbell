@@ -53,6 +53,12 @@ EVENT_TYPES: Final = [EVENT_RING, EVENT_MOTION, EVENT_ALARM]
 BURST_SECONDS: Final = 30
 BURST_INTERVAL: Final = 1.0
 
+# How long after the connection opens an event is treated as old news. EZVIZ
+# hands over what it has been holding the moment it is asked, so a restart or a
+# reload otherwise announces whatever happened last - hours ago, as if it had
+# just happened.
+SETTLE_SECONDS: Final = 15.0
+
 # Push and polled messages use two different code spaces, so they get two
 # different maps. Anything unmapped is reported as a generic alarm with the raw
 # code attached, so a new code can be identified from the event attributes.

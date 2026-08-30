@@ -9,6 +9,7 @@ to the entity an automation would trigger on.
 from __future__ import annotations
 
 from contextlib import contextmanager
+import time
 from unittest.mock import MagicMock, patch
 
 from homeassistant.components.camera import CameraEntityFeature
@@ -110,6 +111,7 @@ async def loaded_entry(
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
+    entry.runtime_data._settle_until = 0
     return entry
 
 
@@ -408,6 +410,9 @@ async def _setup_with(
     with _mocked_cloud(ezviz_client):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
+
+    # Past the window in which anything arriving is treated as old news.
+    entry.runtime_data._settle_until = 0
     return entry
 
 
@@ -639,3 +644,35 @@ async def test_a_siren_only_where_there_is_one(
     # A second account, whose device says only that it has an alarm light.
     sirens = [state for state in hass.states.async_all("siren")]
     assert len(sirens) == 1, sirens
+
+
+async def test_a_reload_does_not_announce_what_already_happened(
+    hass: HomeAssistant, ezviz_client: MagicMock
+) -> None:
+    """EZVIZ hands over what it was holding as soon as it is asked.
+
+    So the first thing heard after a restart or a reload is usually the last
+    thing that happened, hours ago - and it used to arrive as a notification
+    saying somebody was at the door.
+    """
+    entry = await _setup_with(hass, ezviz_client, {})
+    coordinator = entry.runtime_data
+    coordinator._settle_until = time.monotonic() + 15
+
+    old_news = {
+        "alert": "Your doorbell is ringing",
+        "ext": {"device_serial": SERIAL, "alert_type_code": 0, "msgId": "old"},
+    }
+    await coordinator._async_handle_push(old_news)
+    await hass.async_block_till_done()
+
+    assert hass.states.get("event.front_door_doorbell").state == "unknown"
+
+    # Once it has settled, the same message is news.
+    coordinator._settle_until = 0
+    await coordinator._async_handle_push(
+        {**old_news, "ext": {**old_news["ext"], "msgId": "new"}}
+    )
+    await hass.async_block_till_done()
+
+    assert hass.states.get("event.front_door_doorbell").state != "unknown"
