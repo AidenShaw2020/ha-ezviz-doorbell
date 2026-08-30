@@ -343,10 +343,15 @@ Worth knowing:
   whenever the phone is locked.
 - **`time-sensitive`** gets a ring through Focus and a Watch on wrist
   detection. Leave motion on `active` unless you want to hear about every cat.
+- **Away from home the phone needs a way in.** The picture lives on your Home
+  Assistant, and the notification carries a link to it rather than the bytes,
+  so a phone on mobile data can only fetch it if the companion app has a
+  working external URL - Nabu Casa, or your own remote access. Without one the
+  image loads on Wi-Fi and fails everywhere else, which the app reports as a
+  failed attachment.
 - **A live view in the notification**: add `entity_id: camera.front_door` beside
-  `image` and iOS offers the camera when the notification is pulled down. It
-  needs the camera to be reachable from wherever the phone is, so it wants
-  Nabu Casa or a working remote setup; the picture does not.
+  `image` and iOS offers the camera when the notification is pulled down. Same
+  requirement, for the same reason.
 - Replace `front_door` and `your_phone` with your own; the phone's service name
   is under **Developer tools → Actions → notify**.
 
