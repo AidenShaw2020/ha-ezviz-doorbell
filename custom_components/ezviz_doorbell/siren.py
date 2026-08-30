@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from homeassistant.components.siren import (
+    DOMAIN as SIREN_DOMAIN,
     SirenEntity,
     SirenEntityDescription,
     SirenEntityFeature,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import EzvizDoorbellConfigEntry
+from .const import DOMAIN
 from .coordinator import EzvizDoorbellCoordinator
 from .entity import EzvizDoorbellEntity
 from .helpers import supports
+
+_LOGGER = logging.getLogger(__name__)
 
 SIREN = SirenEntityDescription(key="siren", translation_key="siren")
 
@@ -36,11 +42,30 @@ async def async_setup_entry(
 ) -> None:
     """Set up the siren, for the devices that have one."""
     coordinator = entry.runtime_data
-    async_add_entities(
-        EzvizSiren(coordinator, serial)
-        for serial, device in coordinator.data.items()
-        if supports(device.raw, *ALARM_CAPABILITIES)
-    )
+    registry = er.async_get(hass)
+    sirens: list[EzvizSiren] = []
+
+    for serial, device in coordinator.data.items():
+        if supports(device.raw, *ALARM_CAPABILITIES):
+            sirens.append(EzvizSiren(coordinator, serial))
+            continue
+
+        # This device cannot sound an alarm. An earlier version gave every
+        # device a siren regardless, and an entity that was registered once
+        # stays registered - sitting there unavailable, with nothing to remove
+        # it but this.
+        entity_id = registry.async_get_entity_id(
+            SIREN_DOMAIN, DOMAIN, f"{serial}_{SIREN.key}"
+        )
+        # Only ours to remove: another account could hold the same camera.
+        existing = registry.async_get(entity_id) if entity_id else None
+        if entity_id and existing and existing.config_entry_id == entry.entry_id:
+            _LOGGER.debug(
+                "Removing %s: %s does not sound an alarm", entity_id, serial
+            )
+            registry.async_remove(entity_id)
+
+    async_add_entities(sirens)
 
 
 class EzvizSiren(EzvizDoorbellEntity, SirenEntity):

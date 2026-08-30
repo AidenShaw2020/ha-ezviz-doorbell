@@ -48,6 +48,7 @@ async def async_get_config_entry_diagnostics(
                 ),
                 "live_video_offered": _live_video_offered(coordinator, device, serial),
                 "switches": sorted(device.switches),
+                "support_ext": device.raw.get("supportExt"),
                 "last_event": device.last_event,
                 "last_ring": device.last_ring,
                 "last_motion": device.last_motion,

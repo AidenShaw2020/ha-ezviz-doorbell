@@ -23,7 +23,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
-from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers import entity_registry as er, issue_registry as ir
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -813,3 +813,42 @@ async def test_a_picture_that_will_not_download_is_taken_instead(
         await hass.async_block_till_done()
 
     capture.assert_called_once_with(SERIAL)
+
+
+async def test_a_siren_left_over_from_before_is_removed(
+    hass: HomeAssistant, ezviz_client: MagicMock
+) -> None:
+    """An entity registered once stays registered until something removes it.
+
+    An earlier version gave every device a siren, whether it could sound one
+    or not, and those sat in the registry as unavailable with no way to clear
+    them.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_USERNAME: "cloud@example.invalid",
+            CONF_PASSWORD: "secret",
+            CONF_REGION: DEFAULT_REGION,
+        },
+    )
+    entry.add_to_hass(hass)
+
+    registry = er.async_get(hass)
+    stale = registry.async_get_or_create(
+        "siren",
+        DOMAIN,
+        f"{SERIAL}_siren",
+        config_entry=entry,
+        suggested_object_id="front_door_siren",
+    )
+    assert registry.async_get(stale.entity_id) is not None
+
+    # A device that says only that it has an alarm light, not that it sounds one.
+    with patch.dict(RAW_STATUS, {"supportExt": {"113": "1"}}), _mocked_cloud(
+        ezviz_client
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert registry.async_get(stale.entity_id) is None
