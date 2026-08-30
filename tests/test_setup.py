@@ -780,3 +780,36 @@ async def test_a_picture_can_be_forced_for_motion_too(
         await hass.async_block_till_done()
 
     capture.assert_called_once_with(SERIAL)
+
+
+async def test_a_picture_that_will_not_download_is_taken_instead(
+    hass: HomeAssistant, ezviz_client: MagicMock
+) -> None:
+    """An event can carry an address that answers with nothing.
+
+    Which is no better than carrying nothing, and used to count as having
+    brought a picture.
+    """
+    entry = await _setup_with(
+        hass, ezviz_client, {CONF_CAPTURE_WHEN_MISSING: CAPTURE_ALWAYS}
+    )
+    coordinator = entry.runtime_data
+
+    with (
+        patch.object(coordinator, "async_download_snapshot", return_value=None),
+        patch.object(coordinator, "async_capture", return_value=b"jpeg") as capture,
+    ):
+        await coordinator._async_handle_push(
+            {
+                "alert": "AI Human Detection",
+                "ext": {
+                    "device_serial": SERIAL,
+                    "alert_type_code": 10120,
+                    "msgId": "f",
+                    "default_pic_url": "https://pic.invalid/gone.jpg",
+                },
+            }
+        )
+        await hass.async_block_till_done()
+
+    capture.assert_called_once_with(SERIAL)

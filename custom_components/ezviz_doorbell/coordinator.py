@@ -736,14 +736,24 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
         )
         self.async_update_listeners()
 
+        picture = None
         if picture_url:
-            await self.async_download_snapshot(serial, picture_url)
-        elif self._should_capture(event_type) and not self._has_fresh_picture(
-            serial
+            picture = await self.async_download_snapshot(serial, picture_url)
+
+        if (
+            picture is None
+            and self._should_capture(event_type)
+            and not self._has_fresh_picture(serial)
         ):
-            # Nothing came with the message, so go and get one - the camera
-            # only refreshes its picture when something makes it.
-            _LOGGER.debug("Ring for %s came with no picture; taking one", serial)
+            # Either nothing came with the message or what came was no use -
+            # an address that answers with nothing, a picture that will not
+            # decrypt. The camera refreshes its own picture only when something
+            # makes it, so this is what makes it.
+            _LOGGER.debug(
+                "%s for %s brought no usable picture; taking one",
+                event_type,
+                serial,
+            )
             try:
                 await self.async_capture(serial)
             except (PyEzvizError, OSError, HomeAssistantError) as err:
