@@ -1,0 +1,105 @@
+"""The EZVIZ Doorbell integration.
+
+A doorbell that hibernates on battery never passes the built-in integration's
+RTSP check, so it ends up with no camera and almost no entities. This
+integration talks to the same cloud API the EZVIZ app uses instead, which needs
+no RTSP server to exist: the ring arrives as its own event, motion as another,
+and the live view is served out of Home Assistant itself.
+"""
+
+from __future__ import annotations
+
+import secrets
+
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
+from homeassistant.core import HomeAssistant
+
+from .const import CONF_STREAM_TOKEN, DOMAIN
+from .coordinator import EzvizDoorbellCoordinator
+from .stream_view import EzvizStreamView
+
+type EzvizDoorbellConfigEntry = ConfigEntry[EzvizDoorbellCoordinator]
+
+PLATFORMS: list[Platform] = [
+    Platform.BINARY_SENSOR,
+    Platform.BUTTON,
+    Platform.CAMERA,
+    Platform.EVENT,
+    Platform.IMAGE,
+    Platform.NUMBER,
+    Platform.SELECT,
+    Platform.SENSOR,
+    Platform.SIREN,
+    Platform.SWITCH,
+    Platform.UPDATE,
+]
+
+
+async def async_setup_entry(
+    hass: HomeAssistant, entry: EzvizDoorbellConfigEntry
+) -> bool:
+    """Set up one EZVIZ account."""
+    _ensure_stream_token(hass, entry)
+    _register_stream_view(hass)
+
+    coordinator = EzvizDoorbellCoordinator(hass, entry)
+    await coordinator.async_login()
+    await coordinator.async_config_entry_first_refresh()
+    await coordinator.async_start_listening()
+    entry.runtime_data = coordinator
+
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+    return True
+
+
+async def async_unload_entry(
+    hass: HomeAssistant, entry: EzvizDoorbellConfigEntry
+) -> bool:
+    """Tear down one EZVIZ account."""
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unloaded:
+        await entry.runtime_data.async_unload()
+    return unloaded
+
+
+async def _async_options_updated(
+    hass: HomeAssistant, entry: EzvizDoorbellConfigEntry
+) -> None:
+    """Reload when the options change; the intervals are read at setup.
+
+    This listener fires for any change to the entry, and the refreshed EZVIZ
+    session is written back to it whenever the integration starts. Reloading on
+    that would store a new session, fire the listener again, and never stop, so
+    only an actual change to the options counts.
+    """
+    coordinator = entry.runtime_data
+    if entry.options == coordinator.loaded_options:
+        return
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
+def _ensure_stream_token(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Give this account a stream token if it has none yet.
+
+    The view that serves live video cannot ask for a Home Assistant login -
+    FFmpeg, which is what opens the stream, has no way to present one - so the
+    URL carries a secret of its own instead. It is generated once and stays put
+    for the life of the config entry.
+    """
+    if entry.data.get(CONF_STREAM_TOKEN):
+        return
+    hass.config_entries.async_update_entry(
+        entry,
+        data={**entry.data, CONF_STREAM_TOKEN: secrets.token_urlsafe(16)},
+    )
+
+
+def _register_stream_view(hass: HomeAssistant) -> None:
+    """Register the live video view once, however many accounts there are."""
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    if domain_data.get("stream_view_registered"):
+        return
+    hass.http.register_view(EzvizStreamView(hass))
+    domain_data["stream_view_registered"] = True

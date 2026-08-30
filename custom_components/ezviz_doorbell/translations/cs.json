@@ -1,0 +1,252 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Účet EZVIZ",
+        "description": "Přihlaste se účtem, pod kterým je zvonek v aplikaci EZVIZ.",
+        "data": {
+          "username": "E-mail nebo telefon",
+          "password": "Heslo",
+          "region": "Adresa API regionu"
+        },
+        "data_description": {
+          "region": "apiieu.ezvizlife.com pro Evropu, apiius.ezvizlife.com pro Severní Ameriku."
+        }
+      },
+      "mfa": {
+        "title": "Dvoufázový kód",
+        "description": "EZVIZ právě poslal kód na e-mail účtu. Je jednorázový a relace se pak uloží, takže tohle je jednorázový krok.",
+        "data": {
+          "code": "Kód z e-mailu"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Přihlásit znovu",
+        "description": "EZVIZ už uloženou relaci nepřijímá.",
+        "data": {
+          "password": "Heslo",
+          "region": "Adresa API regionu"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "EZVIZ tento e-mail a heslo nepřijal.",
+      "invalid_code": "Kód nebyl přijat. Kódy jsou jen číslice a každý platí jednou.",
+      "invalid_region": "Na tuhle adresu regionu se nepodařilo připojit.",
+      "cannot_connect": "Nepodařilo se spojit s EZVIZ."
+    },
+    "abort": {
+      "already_configured": "Tenhle účet EZVIZ už je nastavený.",
+      "reauth_successful": "Přihlášení obnoveno."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Dotazování a události",
+        "data": {
+          "poll_interval": "Sekundy mezi dotazy na zprávy",
+          "status_interval": "Sekundy mezi načtením stavu zařízení",
+          "live_stream": "Nabízet živé video",
+          "snapshot_interval": "Sekundy mezi snímky",
+          "ring_codes": "Další kódy, které znamenají zvonění",
+          "motion_codes": "Další kódy, které znamenají pohyb"
+        },
+        "data_description": {
+          "poll_interval": "Stisk zvonku přijde jedině dotazováním, takže tohle je jeho nejhorší možné zpoždění. Po každém pushi se dotazování na půl minuty zrychlí na jednou za sekundu, což je přesně doba, kdy stisk obvykle přijde. 0 dotazování vypne.",
+          "snapshot_interval": "Každý snímek je cesta do cloudu a probuzení kamery, takže krátké intervaly stojí baterii.",
+          "ring_codes": "Oddělené čárkou. Potřeba jen u modelu, jehož kódy zatím nikdo nezmapoval - log u každé nerozpoznané události kód vypíše.",
+          "motion_codes": "Oddělené čárkou."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery_level": {
+        "name": "Baterie"
+      },
+      "last_event": {
+        "name": "Poslední událost",
+        "state": {
+          "ring": "Zvonění",
+          "motion": "Pohyb",
+          "alarm": "Alarm"
+        }
+      },
+      "last_ring": {
+        "name": "Poslední zvonění"
+      },
+      "last_motion": {
+        "name": "Poslední pohyb"
+      },
+      "last_alarm_type": {
+        "name": "Typ posledního alarmu"
+      },
+      "last_alarm_time": {
+        "name": "Čas posledního alarmu"
+      },
+      "seconds_last_trigger": {
+        "name": "Sekundy od posledního spuštění"
+      },
+      "wifi_signal": {
+        "name": "Signál Wi-Fi"
+      },
+      "wifi_ssid": {
+        "name": "Síť Wi-Fi"
+      },
+      "local_ip": {
+        "name": "Místní IP"
+      },
+      "wan_ip": {
+        "name": "Veřejná IP"
+      },
+      "pir_status": {
+        "name": "Stav PIR"
+      },
+      "storage_capacity": {
+        "name": "Kapacita úložiště"
+      }
+    },
+    "binary_sensor": {
+      "online": {
+        "name": "Online"
+      },
+      "encrypted": {
+        "name": "Šifrování videa"
+      },
+      "alarm_schedule": {
+        "name": "Plán alarmu"
+      },
+      "ring": {
+        "name": "Tlačítko zvonku"
+      },
+      "motion_detected": {
+        "name": "Detekován pohyb"
+      }
+    },
+    "event": {
+      "doorbell": {
+        "name": "Zvonek"
+      },
+      "motion": {
+        "name": "Pohyb"
+      },
+      "alerts": {
+        "name": "Upozornění"
+      }
+    },
+    "switch": {
+      "motion_detection": {
+        "name": "Detekce pohybu"
+      },
+      "notify_alarm": {
+        "name": "Upozornění na alarm"
+      },
+      "notify_call": {
+        "name": "Upozornění na zvonění"
+      },
+      "device_switch_3": {
+        "name": "Stavová kontrolka"
+      },
+      "device_switch_7": {
+        "name": "Režim soukromí"
+      },
+      "device_switch_10": {
+        "name": "Infračervené přisvícení"
+      },
+      "device_switch_21": {
+        "name": "Spánek"
+      },
+      "device_switch_22": {
+        "name": "Zvuk"
+      },
+      "device_switch_29": {
+        "name": "Nepřetržité nahrávání"
+      },
+      "device_switch_32": {
+        "name": "Automatický spánek"
+      },
+      "device_switch_101": {
+        "name": "Obousměrná komunikace"
+      },
+      "device_switch_200": {
+        "name": "Detekce osob"
+      },
+      "device_switch_303": {
+        "name": "Alarmové světlo"
+      },
+      "device_switch_306": {
+        "name": "Alarm při manipulaci"
+      }
+    },
+    "button": {
+      "wake": {
+        "name": "Probudit kameru"
+      },
+      "snapshot": {
+        "name": "Pořídit snímek"
+      }
+    },
+    "number": {
+      "detection_sensitivity": {
+        "name": "Citlivost detekce"
+      }
+    },
+    "siren": {
+      "siren": {
+        "name": "Siréna"
+      }
+    },
+    "image": {
+      "last_snapshot": {
+        "name": "Poslední snímek"
+      }
+    },
+    "select": {
+      "work_mode": {
+        "name": "Režim provozu",
+        "state": {
+          "power_save": "Úsporný",
+          "high_performance": "Vysoký výkon",
+          "plugged_in": "Napájeno ze sítě",
+          "super_power_save": "Maximálně úsporný",
+          "custom": "Vlastní",
+          "always_on": "Stále zapnuto"
+        }
+      },
+      "night_vision_mode": {
+        "name": "Noční vidění",
+        "state": {
+          "black_and_white": "Černobílé",
+          "colour": "Barevné",
+          "smart": "Chytré"
+        }
+      },
+      "display_mode": {
+        "name": "Styl obrazu",
+        "state": {
+          "original": "Původní",
+          "soft": "Jemný",
+          "vivid": "Živý"
+        }
+      },
+      "alarm_sound_mode": {
+        "name": "Zvuk alarmu",
+        "state": {
+          "soft": "Tichý",
+          "intense": "Hlasitý",
+          "silent": "Bez zvuku"
+        }
+      },
+      "detection_type": {
+        "name": "Typ detekce",
+        "state": {
+          "human_shape": "Postava",
+          "image_change": "Změna obrazu",
+          "pir": "PIR"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,351 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "EZVIZ account",
+        "description": "Sign in with the account the doorbell is registered to in the EZVIZ app.",
+        "data": {
+          "username": "Email or phone number",
+          "password": "Password",
+          "region": "Region API address"
+        },
+        "data_description": {
+          "region": "apiieu.ezvizlife.com for Europe, apiius.ezvizlife.com for North America."
+        }
+      },
+      "mfa": {
+        "title": "Two factor code",
+        "description": "EZVIZ has emailed a code to this account. It is single use, and the session is kept afterwards, so this is a one time step.",
+        "data": {
+          "code": "Code from the email"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Sign in again",
+        "description": "EZVIZ no longer accepts the stored session.",
+        "data": {
+          "password": "Password",
+          "region": "Region API address"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "EZVIZ did not accept that email and password.",
+      "invalid_code": "That code was not accepted. Codes are numbers only, and each one works once.",
+      "invalid_region": "That region address could not be reached.",
+      "cannot_connect": "Could not reach EZVIZ."
+    },
+    "abort": {
+      "already_configured": "This EZVIZ account is already set up.",
+      "reauth_successful": "Signed in again."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Polling and events",
+        "data": {
+          "poll_interval": "Seconds between message polls",
+          "status_interval": "Seconds between device status refreshes",
+          "live_stream": "Offer live video",
+          "snapshot_interval": "Seconds between still pictures",
+          "ring_codes": "Extra alert codes that mean a ring",
+          "motion_codes": "Extra alert codes that mean motion"
+        },
+        "data_description": {
+          "poll_interval": "A doorbell press only ever arrives by polling, so this is its worst case delay. Any push drops the poll to one a second for half a minute, which is where a press usually lands. 0 switches polling off.",
+          "snapshot_interval": "Each picture is a round trip to the cloud and wakes the camera, so short intervals cost battery.",
+          "ring_codes": "Comma separated. Only needed for a model whose codes are not recognised - the log names the code next to every unrecognised event.",
+          "motion_codes": "Comma separated."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery_level": {
+        "name": "Battery"
+      },
+      "last_event": {
+        "name": "Last event",
+        "state": {
+          "ring": "Ring",
+          "motion": "Motion",
+          "alarm": "Alarm"
+        }
+      },
+      "last_ring": {
+        "name": "Last ring"
+      },
+      "last_motion": {
+        "name": "Last motion"
+      },
+      "last_alarm_type": {
+        "name": "Last alarm type"
+      },
+      "last_alarm_time": {
+        "name": "Last alarm time"
+      },
+      "seconds_last_trigger": {
+        "name": "Seconds since last trigger"
+      },
+      "wifi_signal": {
+        "name": "Wi-Fi signal"
+      },
+      "wifi_ssid": {
+        "name": "Wi-Fi network"
+      },
+      "local_ip": {
+        "name": "Local IP"
+      },
+      "wan_ip": {
+        "name": "WAN IP"
+      },
+      "pir_status": {
+        "name": "PIR status"
+      },
+      "storage_capacity": {
+        "name": "Storage capacity"
+      }
+    },
+    "binary_sensor": {
+      "online": {
+        "name": "Online"
+      },
+      "encrypted": {
+        "name": "Video encryption"
+      },
+      "alarm_schedule": {
+        "name": "Alarm schedule"
+      },
+      "ring": {
+        "name": "Doorbell button"
+      },
+      "motion_detected": {
+        "name": "Motion detected"
+      }
+    },
+    "event": {
+      "doorbell": {
+        "name": "Doorbell"
+      },
+      "motion": {
+        "name": "Motion"
+      },
+      "alerts": {
+        "name": "Alerts"
+      }
+    },
+    "switch": {
+      "motion_detection": {
+        "name": "Motion detection"
+      },
+      "notify_alarm": {
+        "name": "Alarm notifications"
+      },
+      "notify_call": {
+        "name": "Doorbell notifications"
+      },
+      "device_switch_1": {
+        "name": "Alarm tone"
+      },
+      "device_switch_2": {
+        "name": "Adaptive stream"
+      },
+      "device_switch_3": {
+        "name": "Status light"
+      },
+      "device_switch_4": {
+        "name": "Intelligent analysis"
+      },
+      "device_switch_5": {
+        "name": "Log upload"
+      },
+      "device_switch_6": {
+        "name": "Defence plan"
+      },
+      "device_switch_7": {
+        "name": "Privacy mode"
+      },
+      "device_switch_8": {
+        "name": "Sound localization"
+      },
+      "device_switch_9": {
+        "name": "Cruise"
+      },
+      "device_switch_10": {
+        "name": "Infrared light"
+      },
+      "device_switch_11": {
+        "name": "Wi-Fi"
+      },
+      "device_switch_12": {
+        "name": "Wi-Fi marketing"
+      },
+      "device_switch_13": {
+        "name": "Wi-Fi light"
+      },
+      "device_switch_14": {
+        "name": "Plug"
+      },
+      "device_switch_21": {
+        "name": "Sleep"
+      },
+      "device_switch_22": {
+        "name": "Audio"
+      },
+      "device_switch_23": {
+        "name": "Baby care"
+      },
+      "device_switch_24": {
+        "name": "Logo"
+      },
+      "device_switch_25": {
+        "name": "Motion tracking"
+      },
+      "device_switch_26": {
+        "name": "Channel offline alert"
+      },
+      "device_switch_29": {
+        "name": "All day recording"
+      },
+      "device_switch_32": {
+        "name": "Auto sleep"
+      },
+      "device_switch_34": {
+        "name": "Roaming status"
+      },
+      "device_switch_35": {
+        "name": "Mobile data"
+      },
+      "device_switch_37": {
+        "name": "Alarm reminder"
+      },
+      "device_switch_39": {
+        "name": "Outdoor ringing sound"
+      },
+      "device_switch_40": {
+        "name": "Intelligent picture quality"
+      },
+      "device_switch_41": {
+        "name": "Light on human detection"
+      },
+      "device_switch_101": {
+        "name": "Two way talk"
+      },
+      "device_switch_200": {
+        "name": "Human detection"
+      },
+      "device_switch_301": {
+        "name": "Flashing light"
+      },
+      "device_switch_303": {
+        "name": "Alarm light"
+      },
+      "device_switch_305": {
+        "name": "Alarm light linkage"
+      },
+      "device_switch_306": {
+        "name": "Tamper alarm"
+      },
+      "device_switch_451": {
+        "name": "Detection type"
+      },
+      "device_switch_600": {
+        "name": "Outlet recovery"
+      },
+      "device_switch_604": {
+        "name": "Wide dynamic range"
+      },
+      "device_switch_611": {
+        "name": "Chime indicator light"
+      },
+      "device_switch_617": {
+        "name": "Distortion correction"
+      },
+      "device_switch_650": {
+        "name": "Tracking"
+      },
+      "device_switch_651": {
+        "name": "Cruise tracking"
+      },
+      "device_switch_700": {
+        "name": "Partial image optimization"
+      },
+      "device_switch_701": {
+        "name": "Feature tracking"
+      },
+      "device_switch_702": {
+        "name": "Logo watermark"
+      }
+    },
+    "button": {
+      "wake": {
+        "name": "Wake camera"
+      },
+      "snapshot": {
+        "name": "Take snapshot"
+      }
+    },
+    "number": {
+      "detection_sensitivity": {
+        "name": "Detection sensitivity"
+      }
+    },
+    "siren": {
+      "siren": {
+        "name": "Siren"
+      }
+    },
+    "image": {
+      "last_snapshot": {
+        "name": "Last snapshot"
+      }
+    },
+    "select": {
+      "work_mode": {
+        "name": "Work mode",
+        "state": {
+          "power_save": "Power save",
+          "high_performance": "High performance",
+          "plugged_in": "Plugged in",
+          "super_power_save": "Super power save",
+          "custom": "Custom",
+          "always_on": "Always on"
+        }
+      },
+      "night_vision_mode": {
+        "name": "Night vision",
+        "state": {
+          "black_and_white": "Black and white",
+          "colour": "Colour",
+          "smart": "Smart"
+        }
+      },
+      "display_mode": {
+        "name": "Image style",
+        "state": {
+          "original": "Original",
+          "soft": "Soft",
+          "vivid": "Vivid"
+        }
+      },
+      "alarm_sound_mode": {
+        "name": "Alarm sound",
+        "state": {
+          "soft": "Soft",
+          "intense": "Intense",
+          "silent": "Silent"
+        }
+      },
+      "detection_type": {
+        "name": "Detection type",
+        "state": {
+          "human_shape": "Human shape",
+          "image_change": "Image change",
+          "pir": "PIR"
+        }
+      }
+    }
+  }
+}

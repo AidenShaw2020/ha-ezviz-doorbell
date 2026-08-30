@@ -11,6 +11,14 @@ It runs beside the built-in `ezviz` integration and changes nothing about it.
 Nothing is replaced, nothing is overridden — remove the add-on and you are back
 where you started.
 
+> **There is now an integration that does the same job**, and it does the two
+> things this add-on cannot: it creates a real camera entity for the live view
+> instead of handing you a URL, and it asks for the two factor code in a dialog
+> rather than through an option you have to restart for. It also needs no MQTT
+> broker. See the [repository README](https://github.com/AidenShaw2020/ha-ezviz-doorbell).
+> This add-on stays supported; run whichever suits you, but not both against the
+> same doorbell, or every event will arrive twice.
+
 ---
 
 ## Why
