@@ -17,7 +17,8 @@
         "title": "Dvoufázový kód",
         "description": "EZVIZ právě poslal kód na e-mail účtu. Je jednorázový a relace se pak uloží, takže tohle je jednorázový krok.",
         "data": {
-          "code": "Kód z e-mailu"
+          "code": "Kód z e-mailu",
+          "resend": "Poslat místo toho nový kód"
         }
       },
       "reauth_confirm": {
@@ -31,9 +32,13 @@
     },
     "error": {
       "invalid_auth": "EZVIZ tento e-mail a heslo nepřijal.",
-      "invalid_code": "Kód nebyl přijat. Kódy jsou jen číslice a každý platí jednou.",
+      "invalid_code": "Kód nebyl přijat. Jsou to jen číslice, platí krátce a každý jednou - zaškrtnutím políčka níž si necháš poslat nový.",
       "invalid_region": "Na tuhle adresu regionu se nepodařilo připojit.",
-      "cannot_connect": "Nepodařilo se spojit s EZVIZ."
+      "cannot_connect": "Nepodařilo se spojit s EZVIZ.",
+      "account_locked": "EZVIZ účet zamkl, obvykle po příliš mnoha pokusech. Počkej pár minut, nebo se přihlas v aplikaci EZVIZ.",
+      "code_sent": "Nový kód je na cestě. Zadej ho níž.",
+      "code_not_sent": "EZVIZ nový kód neposlal. Zruš to a začni znovu.",
+      "unknown": "Přihlášení selhalo z důvodu, který tahle integrace nezná. V logu Home Assistantu je doslova to, co řekl EZVIZ."
     },
     "abort": {
       "already_configured": "Tenhle účet EZVIZ už je nastavený.",

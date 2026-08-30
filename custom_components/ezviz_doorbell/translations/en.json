@@ -17,7 +17,8 @@
         "title": "Two factor code",
         "description": "EZVIZ has emailed a code to this account. It is single use, and the session is kept afterwards, so this is a one time step.",
         "data": {
-          "code": "Code from the email"
+          "code": "Code from the email",
+          "resend": "Send a new code instead"
         }
       },
       "reauth_confirm": {
@@ -31,9 +32,13 @@
     },
     "error": {
       "invalid_auth": "EZVIZ did not accept that email and password.",
-      "invalid_code": "That code was not accepted. Codes are numbers only, and each one works once.",
+      "invalid_code": "That code was not accepted. Codes are numbers only, they expire quickly, and each one works once - tick the box below to have a new one sent.",
       "invalid_region": "That region address could not be reached.",
-      "cannot_connect": "Could not reach EZVIZ."
+      "cannot_connect": "Could not reach EZVIZ.",
+      "account_locked": "EZVIZ has locked this account, usually after too many attempts. Wait a few minutes, or sign in with the EZVIZ app to clear it.",
+      "code_sent": "A new code is on its way. Enter it below.",
+      "code_not_sent": "EZVIZ would not send a new code. Cancel and start again.",
+      "unknown": "The login failed for a reason this integration does not recognise. The Home Assistant log has what EZVIZ said, word for word."
     },
     "abort": {
       "already_configured": "This EZVIZ account is already set up.",
