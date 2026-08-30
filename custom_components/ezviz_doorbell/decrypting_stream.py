@@ -11,10 +11,15 @@ is why an encrypted camera came out as a clip rather than a live view: a wait,
 a few seconds of video, then the end of the stream.
 
 So the library's own decryption is used - unchanged, one call per piece - on
-pieces that are safe to hand it. A piece is safe when it starts at a NAL
-boundary and ends before the next one, because the decrypter carries state
-across a NAL body and has none to carry in or out at a boundary. Everything
-after the last boundary is held back until the rest of it arrives.
+pieces that are safe to hand it. A piece has to begin where a packet does, or
+its parser will not recognise it, and it must not end inside a NAL's encrypted
+prefix, because the decrypter carries that state across the bytes of one NAL
+and has none to carry from one call to the next. Everything past the last such
+point is held back until the rest of it arrives.
+
+The one limit left: a run of frames each smaller than the 4 KB prefix offers
+nowhere to cut, and waits for the next larger frame. Cameras send frames larger
+than that most of the time, so in practice video comes out continuously.
 """
 
 from __future__ import annotations
@@ -32,6 +37,7 @@ from .vendor.pyezvizapi.cloud_stream import (
     open_cloud_stream,
 )
 from .vendor.pyezvizapi.stream import (
+    HIKVISION_NAL_ENCRYPTED_PREFIX_LENGTH,
     _find_nal_start_codes,
     _is_video_pes_stream_id,
     _mpeg_ps_complete_packet_ranges,
@@ -64,8 +70,10 @@ class NalAlignedDecryptor:
         self._held += payload
         cut = self._boundary()
         if cut <= 0 and len(self._held) > MAX_HELD_BYTES:
-            _LOGGER.debug("No NAL boundary in %d bytes; decrypting anyway", len(self._held))
-            cut = len(self._held)
+            cut = self._boundary(allow_damage=True)
+            _LOGGER.debug(
+                "No safe cut in %d bytes; taking one at %d", len(self._held), cut
+            )
         if cut > 0:
             self._emit(cut)
         return len(payload)
@@ -99,25 +107,93 @@ class NalAlignedDecryptor:
         )
         self._sink.flush()
 
-    def _boundary(self) -> int:
-        """Return where the last complete NAL ends, or 0 if none does.
+    def _boundary(self, *, allow_damage: bool = False) -> int:
+        """Return how much can be decrypted now, or 0 if nothing can.
 
-        A video packet whose payload opens with a NAL start code begins a NAL,
-        so everything before it is whole. The last such packet in what is held
-        is the furthest that can safely be decrypted.
+        A piece has to start where a packet does, or the decrypter's parser
+        will not recognise it and will hand it back untouched. So the cut is
+        always a packet boundary - but not any packet boundary: it must not
+        fall inside a NAL's encrypted prefix, because the decrypter carries the
+        state for that across the bytes of one NAL and has none to carry from
+        one call to the next. Anything after such a cut would stay encrypted.
+
+        The newest NAL is never cut into at all: how long it is, and therefore
+        how much of it is encrypted, is not yet known.
+
+        A NAL rarely begins exactly where a packet's payload does; it lands
+        somewhere inside one. Waiting for the two to coincide - which is what
+        this used to do - held video back until whichever packet happened to
+        line up, and played it out in bursts with long stalls between them.
         """
         data = bytes(self._held)
+        packets = _mpeg_ps_complete_packet_ranges(data)
+        if not packets:
+            return 0
+
+        starts, cuts = self._survey(data, packets)
+        if not starts:
+            # Nothing here begins a NAL, so nothing here is mid-NAL either.
+            return packets[-1].end
+
+        newest = starts[-1][0]
         boundary = 0
-        for packet in _mpeg_ps_complete_packet_ranges(data):
-            if not _is_video_pes_stream_id(packet.stream_id):
+        for offset, video_offset in cuts:
+            if offset > newest and not allow_damage:
+                # Out of room is the one reason to cut into the newest NAL:
+                # how far it is encrypted is not yet known, so this spoils one
+                # frame - which beats a buffer with no end to it.
+                break
+            if any(
+                start < offset and video_start < video_offset < video_end
+                for start, video_start, video_end in starts
+            ):
                 continue
-            payload_start = _pes_payload_start(data, packet.start)
-            if payload_start is None or payload_start >= packet.end:
-                continue
-            starts = _find_nal_start_codes(data, payload_start, packet.end)
-            if starts and starts[0][0] == payload_start:
-                boundary = packet.start
+            boundary = offset
         return boundary
+
+    def _survey(
+        self, data: bytes, packets: list[Any]
+    ) -> tuple[list[tuple[int, int, int]], list[tuple[int, int]]]:
+        """Return where NALs start and where a piece could end.
+
+        Both in two coordinates at once: the offset in the buffer, which is
+        where a cut is actually made, and the offset counting video payload
+        only, which is what the 4 KB encrypted prefix is measured in. They are
+        not the same - packet headers sit between the payload bytes - and
+        measuring the prefix in buffer bytes cuts it short by one header per
+        packet it spans, which leaves the tail of it encrypted.
+        """
+        starts: list[tuple[int, int, int]] = []
+        cuts: list[tuple[int, int]] = []
+        video_offset = 0
+
+        for packet in packets:
+            payload_start = None
+            if _is_video_pes_stream_id(packet.stream_id):
+                payload_start = _pes_payload_start(data, packet.start)
+
+            if payload_start is None or payload_start >= packet.end:
+                cuts.append((packet.end, video_offset))
+                continue
+
+            for position, _ in _find_nal_start_codes(data, payload_start, packet.end):
+                at = video_offset + (position - payload_start)
+                starts.append(
+                    (position, at, at + HIKVISION_NAL_ENCRYPTED_PREFIX_LENGTH + 6)
+                )
+
+            video_offset += packet.end - payload_start
+            cuts.append((packet.end, video_offset))
+
+        # A NAL's encrypted part stops where the NAL does, however short that
+        # makes it, so the next NAL's start is also the end of this one's.
+        capped = [
+            (offset, at, min(end, starts[index + 1][1]))
+            if index + 1 < len(starts)
+            else (offset, at, end)
+            for index, (offset, at, end) in enumerate(starts)
+        ]
+        return capped, cuts
 
 
 def copy_decrypted_cloud_stream(

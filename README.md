@@ -235,6 +235,11 @@ encrypted, so the stream is decrypted as it arrives rather than fetched, waited
 for and decrypted in one lump — which is what the EZVIZ app does, and why it can
 play an encrypted camera live when a "download the clip first" approach cannot.
 
+Video is handed on as each frame ends. A run of frames each smaller than that
+4 KB prefix leaves nowhere to cut and waits for the next larger one; cameras
+send frames bigger than that most of the time, so in practice it plays
+continuously.
+
 What it needs is the key, and usually it has one: EZVIZ hands most accounts the
 key to their own camera over its API, and this integration asks for it as the
 device is read. Nothing has to be typed in.
