@@ -14,7 +14,7 @@ import secrets
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import device_registry as dr, issue_registry as ir
 
 from .const import (
     CAMERA_SUBENTRY,
@@ -68,6 +68,7 @@ async def async_setup_entry(
     entry.runtime_data = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    _review_live_video(hass, entry, coordinator)
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     return True
 
@@ -134,6 +135,39 @@ def _ensure_stream_token(hass: HomeAssistant, entry: ConfigEntry) -> None:
         entry,
         data={**entry.data, CONF_STREAM_TOKEN: secrets.token_urlsafe(16)},
     )
+
+
+def _review_live_video(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    coordinator: EzvizDoorbellCoordinator,
+) -> None:
+    """Raise a repair for each camera that cannot offer live video.
+
+    A camera with encryption on and no key is offered as stills, which looks
+    from the outside exactly like a camera that is simply not streaming. Saying
+    so in the log at info level tells nobody; a repair says it where somebody
+    will see it, and goes away by itself once the code is given.
+    """
+    for serial, device in coordinator.data.items():
+        issue_id = f"video_encryption_{serial}"
+        blocked = bool(device.raw.get("encrypted")) and (
+            coordinator.verification_code(serial) is None
+        )
+        if not blocked:
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
+            continue
+
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="video_encryption",
+            translation_placeholders={"name": device.name, "serial": serial},
+            learn_more_url="https://github.com/AidenShaw2020/ha-ezviz-doorbell#video-encryption-and-the-key-that-gets-past-it",
+        )
 
 
 def _migrate_codes_out_of_subentries(

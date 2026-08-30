@@ -74,6 +74,12 @@
       }
     }
   },
+  "issues": {
+    "video_encryption": {
+      "title": "{name}: no live video",
+      "description": "Video encryption is switched on for {name} ({serial}) and this integration has no key for it, so the camera is offered as still pictures rather than live video.\n\nEither give it the verification code printed on the device's label, under the integration's three dot menu and Reconfigure, or switch video encryption off for this device in the EZVIZ app. Image encryption is a separate setting and can stay on either way."
+    }
+  },
   "entity": {
     "sensor": {
       "battery_level": {

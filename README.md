@@ -237,9 +237,18 @@ video.
 
 With encryption on and no key, no stream is offered at all and the camera shows
 stills: a play button that can only fail makes Home Assistant retry it endlessly
-and fills the log. The other way out is switching video encryption off for that
+and fills the log. Home Assistant raises a repair saying which camera and what
+to do about it, and clears it once there is a key. **Settings → Devices &
+services → EZVIZ Doorbell → ⋮ → Download diagnostics** lists, per camera,
+whether encryption is on, whether a key is configured and whether live video is
+being offered at all. The other way out is switching video encryption off for that
 device in the EZVIZ app, which needs no key at all. Image encryption is a
 separate setting and can stay on either way.
+
+Note that a dashboard card shows a still by default even when live video is
+available — click the camera, or set `camera_view: live` on the card, to make it
+play. Whether the entity offers a stream at all is in its `supported_features`
+attribute: `1` means it does, `0` means stills only.
 
 One more thing worth knowing: **a cloud stream is a cloud stream.** It costs
 bandwidth at both ends and takes longer to start than RTSP would. Switch *Offer

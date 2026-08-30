@@ -22,9 +22,13 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import issue_registry as ir
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.ezviz_doorbell.diagnostics import (
+    async_get_config_entry_diagnostics,
+)
 from custom_components.ezviz_doorbell.const import (
     CAMERA_SUBENTRY,
     CONF_DEVICES,
@@ -543,3 +547,46 @@ async def test_only_doorbells_are_built(
 
     assert set(entry.runtime_data.data) == {SERIAL}
     assert hass.states.get("camera.front_door") is not None
+
+
+async def test_a_camera_that_cannot_stream_says_so_where_it_is_seen(
+    hass: HomeAssistant, ezviz_client: MagicMock
+) -> None:
+    """Stills where live video was expected looks like nothing at all.
+
+    An info line in the log tells nobody, so it is a repair - and one that
+    clears itself once there is a key.
+    """
+    entry = await _setup_with(hass, ezviz_client, {})
+    issues = ir.async_get(hass)
+
+    assert issues.async_get_issue(DOMAIN, f"video_encryption_{SERIAL}") is not None
+
+    with _mocked_cloud(ezviz_client):
+        result = await entry.start_reconfigure_flow(hass)
+        await hass.config_entries.flow.async_configure(
+            result["flow_id"], {SERIAL: "ABCDEF"}
+        )
+        await hass.async_block_till_done()
+
+    assert issues.async_get_issue(DOMAIN, f"video_encryption_{SERIAL}") is None
+    assert (
+        hass.states.get("camera.front_door").attributes["supported_features"]
+        == CameraEntityFeature.STREAM
+    )
+
+
+async def test_diagnostics_say_why_there_is_no_live_video(
+    hass: HomeAssistant, ezviz_client: MagicMock
+) -> None:
+    """The three things that decide it, in one place, with no secrets."""
+    entry = await _setup_with(hass, ezviz_client, {})
+
+    report = await async_get_config_entry_diagnostics(hass, entry)
+    camera = report["devices"][0]
+
+    assert camera["video_encryption"] is True
+    assert camera["verification_code_configured"] is False
+    assert camera["live_video_offered"] is False
+    assert report["library"]["cloud_stream_available"] is True
+    assert "secret" not in str(report)

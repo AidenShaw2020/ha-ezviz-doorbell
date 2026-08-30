@@ -74,6 +74,12 @@
       }
     }
   },
+  "issues": {
+    "video_encryption": {
+      "title": "{name}: není živý obraz",
+      "description": "U zařízení {name} ({serial}) je zapnuté šifrování videa a integrace k němu nemá klíč, takže kamera nabízí jen snímky místo živého obrazu.\n\nBuď jí dej ověřovací kód vytištěný na štítku zařízení - v nabídce integrace pod třemi tečkami, Překonfigurovat - nebo u toho zařízení vypni v aplikaci EZVIZ šifrování videa. Šifrování obrázků je jiné nastavení a může zůstat zapnuté."
+    }
+  },
   "entity": {
     "sensor": {
       "battery_level": {
