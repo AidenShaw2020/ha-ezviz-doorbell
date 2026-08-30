@@ -1,0 +1,4 @@
+# Home Assistant's own test harness, which brings the matching Home Assistant
+# release with it. Unpinned on purpose: the point of the tests is to notice
+# when a new release stops loading the integration.
+pytest-homeassistant-custom-component

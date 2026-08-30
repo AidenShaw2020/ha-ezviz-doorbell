@@ -281,6 +281,17 @@ Which of the cloud calls a given model answers varies by firmware. Everything is
 built from what the device itself reports, and a request a device refuses is
 logged rather than retried.
 
+What *is* covered is that the integration loads and behaves, against Home
+Assistant itself (2026.2) with the cloud mocked out - every platform's
+entities appear, a ring reaches the doorbell entity without touching motion, a
+detection arriving on both paths fires once, and the switches and the wake
+button reach the API calls they should:
+
+```bash
+pip install -r requirements-test.txt
+pytest
+```
+
 ## tools/
 
 Standalone scripts, useful before or instead of installing anything. Both prompt
