@@ -15,8 +15,18 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import EzvizDoorbellConfigEntry
 from .coordinator import EzvizDoorbellCoordinator
 from .entity import EzvizDoorbellEntity
+from .helpers import supports
 
 SIREN = SirenEntityDescription(key="siren", translation_key="siren")
+
+# Sounding the alarm is not something every device does, and one that does not
+# answers with 设备异常 - "device error" - however the request is phrased. These
+# are the capabilities that mean it can.
+ALARM_CAPABILITIES = (
+    7,  # SupportAlarmVoice
+    96,  # SupportActiveDefense
+    214,  # SupportSoundLightAlarm
+)
 
 
 async def async_setup_entry(
@@ -24,9 +34,13 @@ async def async_setup_entry(
     entry: EzvizDoorbellConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the siren."""
+    """Set up the siren, for the devices that have one."""
     coordinator = entry.runtime_data
-    async_add_entities(EzvizSiren(coordinator, serial) for serial in coordinator.data)
+    async_add_entities(
+        EzvizSiren(coordinator, serial)
+        for serial, device in coordinator.data.items()
+        if supports(device.raw, *ALARM_CAPABILITIES)
+    )
 
 
 class EzvizSiren(EzvizDoorbellEntity, SirenEntity):

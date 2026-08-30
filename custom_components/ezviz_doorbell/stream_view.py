@@ -101,7 +101,7 @@ class EzvizStreamView(HomeAssistantView):
         await coordinator.async_keep_awake(serial)
 
         encrypted = bool(coordinator.data[serial].raw.get("encrypted"))
-        media_key = coordinator.verification_code(serial)
+        media_key = coordinator.media_key(serial)
         if encrypted and media_key is None:
             # The stream is decrypted as it arrives, but only with a key, and
             # EZVIZ will not hand every account one over its API.

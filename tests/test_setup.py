@@ -26,6 +26,9 @@ from homeassistant.helpers import issue_registry as ir
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.ezviz_doorbell.vendor.pyezvizapi.exceptions import (
+    PyEzvizError,
+)
 from custom_components.ezviz_doorbell.diagnostics import (
     async_get_config_entry_diagnostics,
 )
@@ -72,6 +75,8 @@ RAW_STATUS = {
     "optionals": PAGELIST_DEVICE["STATUS"]["optionals"],
     "WIFI": PAGELIST_DEVICE["WIFI"],
     "switches": {3: True, 21: False, 22: True, 200: True, 4242: False},
+    # SupportAlarmVoice: this model can sound its own alarm.
+    "supportExt": {"7": "1"},
 }
 
 
@@ -406,6 +411,31 @@ async def _setup_with(
     return entry
 
 
+def _refuses_the_key(ezviz_client: MagicMock) -> MagicMock:
+    """Make EZVIZ withhold the camera key, as it does for some accounts."""
+    ezviz_client.get_cam_key.side_effect = PyEzvizError(
+        "Could not get camera encryption key"
+    )
+    return ezviz_client
+
+
+async def test_an_encrypted_camera_streams_on_the_key_ezviz_gives(
+    hass: HomeAssistant, ezviz_client: MagicMock
+) -> None:
+    """Most accounts are given the key, and then nothing has to be typed in.
+
+    The snapshots proved it: they were arriving decrypted while live video was
+    being refused for want of a key that was there for the asking.
+    """
+    await _setup_with(hass, ezviz_client, {})
+
+    assert RAW_STATUS["encrypted"] is True
+    assert (
+        hass.states.get("camera.front_door").attributes["supported_features"]
+        == CameraEntityFeature.STREAM
+    )
+
+
 async def test_an_encrypted_camera_offers_no_stream_without_a_key(
     hass: HomeAssistant, ezviz_client: MagicMock
 ) -> None:
@@ -414,7 +444,7 @@ async def test_an_encrypted_camera_offers_no_stream_without_a_key(
     Home Assistant retries a stream that will not open, over and over, and
     fills the log doing it.
     """
-    await _setup_with(hass, ezviz_client, {})
+    await _setup_with(hass, _refuses_the_key(ezviz_client), {})
 
     assert RAW_STATUS["encrypted"] is True
     assert hass.states.get("camera.front_door").attributes["supported_features"] == 0
@@ -557,7 +587,7 @@ async def test_a_camera_that_cannot_stream_says_so_where_it_is_seen(
     An info line in the log tells nobody, so it is a repair - and one that
     clears itself once there is a key.
     """
-    entry = await _setup_with(hass, ezviz_client, {})
+    entry = await _setup_with(hass, _refuses_the_key(ezviz_client), {})
     issues = ir.async_get(hass)
 
     assert issues.async_get_issue(DOMAIN, f"video_encryption_{SERIAL}") is not None
@@ -580,7 +610,7 @@ async def test_diagnostics_say_why_there_is_no_live_video(
     hass: HomeAssistant, ezviz_client: MagicMock
 ) -> None:
     """The three things that decide it, in one place, with no secrets."""
-    entry = await _setup_with(hass, ezviz_client, {})
+    entry = await _setup_with(hass, _refuses_the_key(ezviz_client), {})
 
     report = await async_get_config_entry_diagnostics(hass, entry)
     camera = report["devices"][0]
@@ -590,3 +620,22 @@ async def test_diagnostics_say_why_there_is_no_live_video(
     assert camera["live_video_offered"] is False
     assert report["library"]["cloud_stream_available"] is True
     assert "secret" not in str(report)
+
+
+async def test_a_siren_only_where_there_is_one(
+    hass: HomeAssistant, ezviz_client: MagicMock
+) -> None:
+    """A doorbell that cannot sound an alarm should not offer to.
+
+    EZVIZ answers a request to a device that does not do it with 设备异常, and
+    a button whose only outcome is an error is worse than no button.
+    """
+    await _setup_with(hass, ezviz_client, {})
+    assert hass.states.get("siren.front_door_siren") is not None
+
+    with patch.dict(RAW_STATUS, {"supportExt": {"113": "1"}}):
+        await _setup_with(hass, ezviz_client, {CONF_STATUS_INTERVAL: 61})
+
+    # A second account, whose device says only that it has an alarm light.
+    sirens = [state for state in hass.states.async_all("siren")]
+    assert len(sirens) == 1, sirens

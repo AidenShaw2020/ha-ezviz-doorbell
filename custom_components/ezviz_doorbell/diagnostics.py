@@ -42,6 +42,10 @@ async def async_get_config_entry_diagnostics(
                 "verification_code_configured": (
                     coordinator.verification_code(serial) is not None
                 ),
+                "key_from_ezviz": (
+                    coordinator.verification_code(serial) is None
+                    and coordinator.media_key(serial) is not None
+                ),
                 "live_video_offered": _live_video_offered(coordinator, device, serial),
                 "switches": sorted(device.switches),
                 "last_event": device.last_event,
@@ -69,4 +73,4 @@ def _live_video_offered(coordinator: Any, device: Any, serial: str) -> bool:
         return False
     if not device.raw.get("encrypted"):
         return True
-    return coordinator.verification_code(serial) is not None
+    return coordinator.media_key(serial) is not None

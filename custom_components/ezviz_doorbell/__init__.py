@@ -152,7 +152,7 @@ def _review_live_video(
     for serial, device in coordinator.data.items():
         issue_id = f"video_encryption_{serial}"
         blocked = bool(device.raw.get("encrypted")) and (
-            coordinator.verification_code(serial) is None
+            coordinator.media_key(serial) is None
         )
         if not blocked:
             ir.async_delete_issue(hass, DOMAIN, issue_id)

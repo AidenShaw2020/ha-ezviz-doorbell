@@ -77,7 +77,7 @@ One device per camera, with:
 | `number` | Detection sensitivity |
 | `select` | Work mode, Night vision, Image style, Alarm sound, Detection type |
 | `button` | **Wake camera**, Take snapshot, Reboot |
-| `siren` | Sounds the camera's own alarm |
+| `siren` | Sounds the camera's own alarm — only for devices that say they can |
 | `image` | Last snapshot, decrypted |
 | `update` | Firmware, with an Install button |
 
@@ -226,14 +226,16 @@ encrypted, so the stream is decrypted as it arrives rather than fetched, waited
 for and decrypted in one lump — which is what the EZVIZ app does, and why it can
 play an encrypted camera live when a "download the clip first" approach cannot.
 
-What it needs is the key. EZVIZ hands most accounts the device key over its API
-and this integration asks for it, but not every account gets it — a shared
-device, or one EZVIZ answers with `好友不存在` / `重复申请分享`, both of which mean
-"no". The key is then the code printed on the device's own label, and it goes in
-under **Settings → Devices & services → EZVIZ Doorbell → ⋮ → Reconfigure**, one
-box per camera, named by the serial that is printed on the same label. It takes
-effect immediately, and it decrypts that camera's snapshots as well as its
-video.
+What it needs is the key, and usually it has one: EZVIZ hands most accounts the
+key to their own camera over its API, and this integration asks for it as the
+device is read. Nothing has to be typed in.
+
+Some accounts are refused — a shared device, or one EZVIZ answers with
+`好友不存在` / `重复申请分享`, both of which mean "no". The key is then the code
+printed on the device's own label, and it goes in under **Settings → Devices &
+services → EZVIZ Doorbell → ⋮ → Reconfigure**, one box per camera, named by the
+serial that is printed on the same label. It takes effect immediately, and it
+decrypts that camera's snapshots as well as its video.
 
 With encryption on and no key, no stream is offered at all and the camera shows
 stills: a play button that can only fail makes Home Assistant retry it endlessly

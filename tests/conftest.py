@@ -76,5 +76,7 @@ def ezviz_client() -> MagicMock:
     client.get_device_infos.return_value = {SERIAL: PAGELIST_DEVICE}
     client.get_detection_sensibility.return_value = 4
     client.get_device_messages_list.return_value = {"message": []}
+    # EZVIZ hands most accounts the key to their own camera.
+    client.get_cam_key.return_value = "CLOUDKEY"
     client.get_mqtt_client.return_value = MagicMock()
     return client

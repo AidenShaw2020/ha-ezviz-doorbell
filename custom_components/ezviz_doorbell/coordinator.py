@@ -132,6 +132,10 @@ class DeviceData:
     snapshot: bytes | None = None
     snapshot_time: datetime | None = None
 
+    # What decrypts this camera: the code from its label if one was given, or
+    # the key EZVIZ hands the account that owns it.
+    media_key: str | None = None
+
     @property
     def name(self) -> str:
         """Return the device's name, falling back to its serial."""
@@ -193,6 +197,7 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
         self._recent: dict[str, float] = {}
         self._sensitivity_broken: set[str] = set()
         self._warned_about_categories = False
+        self._keyless: set[str] = set()
 
         poll_interval = options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
         # Wide enough to cover a poll arriving after a push for the same event,
@@ -345,6 +350,17 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
                 # device first appears, not one a minute for ever after.
                 device.detection_sensitivity = (
                     await self._async_detection_sensitivity(serial)
+                )
+
+            if (
+                device.media_key is None
+                and raw.get("encrypted")
+                and not self._verification_codes.get(serial)
+            ):
+                # Asked for before the entities are built, because whether the
+                # camera can offer live video depends on the answer.
+                device.media_key = await self.hass.async_add_executor_job(
+                    self._fetch_media_key, serial
                 )
 
         return self.data
@@ -700,11 +716,10 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
             return data
 
         assert self.client is not None
-        key = self._verification_codes.get(serial)
+        key = self.media_key(serial) or self._fetch_media_key(serial)
+        if key is None:
+            return None
         try:
-            if key is None:
-                with self._api_lock:
-                    key = self.client.get_cam_key(serial)
             return decrypt_image(data, key)
         except (PyEzvizError, OSError) as err:
             _LOGGER.warning(
@@ -811,8 +826,41 @@ class EzvizDoorbellCoordinator(DataUpdateCoordinator[dict[str, DeviceData]]):
         return result
 
     def verification_code(self, serial: str) -> str | None:
-        """Return the verification code configured for one device."""
+        """Return the code configured by hand for one device, if any."""
         return self._verification_codes.get(serial)
+
+    def media_key(self, serial: str) -> str | None:
+        """Return what decrypts this camera, without going to the cloud.
+
+        Either the code from its label, or the key EZVIZ handed out when the
+        device was last read. Both decrypt the pictures and the video; the code
+        only has to be typed in when EZVIZ will not give this account the key.
+        """
+        if configured := self._verification_codes.get(serial):
+            return configured
+        device = self.data.get(serial)
+        return device.media_key if device else None
+
+    def _fetch_media_key(self, serial: str) -> str | None:
+        """Ask EZVIZ for a camera's key (executor thread)."""
+        if serial in self._keyless:
+            return None
+        try:
+            with self._api_lock:
+                key = self.client.get_cam_key(serial)
+        except (PyEzvizError, OSError, AttributeError) as err:
+            # Not every account is given one - a shared device, most often -
+            # and an older library has no way to ask at all.
+            self._keyless.add(serial)
+            _LOGGER.info(
+                "EZVIZ will not give this account the key for %s (%s). Its"
+                " pictures and video stay encrypted unless the code from its"
+                " label is given to the integration under Reconfigure",
+                serial,
+                err,
+            )
+            return None
+        return str(key) if key else None
 
     async def async_keep_awake(self, serial: str) -> bool:
         """Ask the cloud to keep a battery camera awake a while longer."""

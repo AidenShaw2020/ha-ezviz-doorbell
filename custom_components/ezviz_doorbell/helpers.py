@@ -86,6 +86,23 @@ def display_mode(status: dict[str, Any]) -> Any:
     return nested(value, "mode")
 
 
+def supports(status: dict[str, Any], *flags: int) -> bool:
+    """Return whether the device advertises any of these capabilities.
+
+    EZVIZ reports what a device can do in ``supportExt``, keyed by capability
+    number. Asking it beforehand is the difference between an entity that works
+    and one that answers every press with 设备异常 - the cloud's way of saying
+    this device does not do that.
+    """
+    ext = status.get("supportExt")
+    if not isinstance(ext, dict):
+        return False
+    return any(
+        str(ext.get(str(flag), "0")).strip() not in ("", "0", "false", "None")
+        for flag in flags
+    )
+
+
 def first_image_url(value: Any) -> str | None:
     """Return the first HTTP(S) image URL anywhere in an EZVIZ response.
 

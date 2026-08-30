@@ -82,13 +82,13 @@ class EzvizDoorbellCamera(EzvizDoorbellEntity, Camera):
         """Return whether this camera's video can actually be played.
 
         An encrypted stream is decrypted as it arrives, which needs the
-        camera's key - and EZVIZ does not hand every account one over its API.
-        Without a key there is nothing to decode with, and a play button that
-        can only fail makes Home Assistant retry it for ever.
+        camera's key - either the one EZVIZ hands the account or the code from
+        the device's label. Without either there is nothing to decode with, and
+        a play button that can only fail makes Home Assistant retry it for ever.
         """
         if not coordinator.data[serial].raw.get("encrypted"):
             return True
-        if coordinator.verification_code(serial) is not None:
+        if coordinator.media_key(serial) is not None:
             return True
         _LOGGER.info(
             "%s has video encryption on and no key configured, so it is"
