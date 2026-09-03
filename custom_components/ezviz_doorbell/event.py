@@ -25,6 +25,8 @@ from .const import EVENT_MOTION, EVENT_RING, EVENT_TYPES, signal_event
 from .coordinator import EzvizDoorbellCoordinator
 from .entity import EzvizDoorbellEntity
 
+MAX_SEEN_EVENTS = 500
+
 
 @dataclass(frozen=True, kw_only=True)
 class EzvizEventDescription(EventEntityDescription):
@@ -85,6 +87,21 @@ class EzvizEvent(EzvizDoorbellEntity, EventEntity):
         """Initialize the event entity."""
         super().__init__(coordinator, serial, description.key)
         self.entity_description = description
+        # EZVIZ can replay the last MQTT message after the connection comes
+        # back. Keep a bounded history here as a second line of defence beyond
+        # the coordinator's short push-vs-poll dedupe window.
+        self._seen_events: dict[str, None] = {}
+
+    @property
+    def available(self) -> bool:
+        """Keep event entities independent from status-poll availability.
+
+        Motion and rings arrive through push/message polling, not through the
+        status request managed by DataUpdateCoordinator. A temporary failure of
+        that unrelated request must therefore not turn the event entity into
+        ``unavailable`` and create a false state transition for automations.
+        """
+        return self._serial in self.coordinator.data
 
     async def async_added_to_hass(self) -> None:
         """Start listening for events."""
@@ -105,6 +122,38 @@ class EzvizEvent(EzvizDoorbellEntity, EventEntity):
         only = self.entity_description.only
         if only is not None and event_type != only:
             return
+        if self._is_replay(event_type, attributes):
+            return
 
         self._trigger_event(event_type, attributes)
         self.async_write_ha_state()
+
+    def _is_replay(self, event_type: str, attributes: dict) -> bool:
+        """Return True when EZVIZ re-sends an event already delivered here."""
+        msg_id = attributes.get("msg_id")
+        if msg_id:
+            key = f"msg:{msg_id}"
+        elif event_time := attributes.get("time"):
+            # A few models omit msgId. Their cloud timestamp together with the
+            # event path and code is the next most stable replay fingerprint.
+            key = "|".join(
+                (
+                    "time",
+                    event_type,
+                    str(attributes.get("source") or ""),
+                    str(attributes.get("alert_type_code") or ""),
+                    str(event_time),
+                )
+            )
+        else:
+            # Without any stable identity, suppressing the event would risk
+            # merging two genuine consecutive presses or motion detections.
+            return False
+
+        if key in self._seen_events:
+            return True
+
+        self._seen_events[key] = None
+        if len(self._seen_events) > MAX_SEEN_EVENTS:
+            self._seen_events.pop(next(iter(self._seen_events)))
+        return False
